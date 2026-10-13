@@ -1,0 +1,60 @@
+base_config: common.yaml
+
+problem: vial_inspection
+data:
+  directory: data/problem1
+task: final_vial_inspection
+
+digital_twin:
+  enabled: true
+  asset_root: data/csi_digital_twin_v1
+  stage: data/csi_digital_twin_v1/stations/tray_inspection/tray_inspection.usdc
+  full_line_stage: data/csi_digital_twin_v1/csi_line.usda
+  camera: CapSealCam
+  camera_settings: data/csi_digital_twin_v1/cameras/CapSealCam.json
+  frame: 1
+  render_size: [768, 576]
+  final_size: [640, 480]
+  subframes: 8
+  lens_postprocess: true
+  output: outputs/digital_twin/problem1_cap_seal.png
+
+components:
+  cameras:
+    count: 1
+    synchronized: false
+    views:
+      - id: fixture_overhead
+        role: final_fixture_inspection
+        placement: overhead
+        resolution: [640, 480]
+  fixtures:
+    count: 2
+    positions_per_fixture: 30
+    items:
+      - id: good
+        label: G
+      - id: scrap
+        label: S
+
+inspection:
+  states:
+    - pass
+    - missing_cap
+    - crooked_cap
+    - damaged_vial
+    - empty_position
+  fill_order: right_to_left_columns_top_to_bottom
+  order_complete_signal_required: true
+  priority: minimize_missed_defects
+
+evaluation:
+  primary_metric: defect_recall
+  secondary_metrics:
+    - false_alarm_rate
+    - position_occupancy_accuracy
+
+model:
+  framework: nvidia-tao
+  architecture: visual_changenet
+  annotation_format: tao

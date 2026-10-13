@@ -1,0 +1,57 @@
+base_config: common.yaml
+
+problem: grasping_sorting
+data:
+  directory: data/problem3
+  use_synthetic_data: false
+  synthetic_source: null
+task: vision_guided_robotic_grasping_and_sorting
+
+components:
+  cameras:
+    count: 3
+    synchronized: true
+    views:
+      - id: overhead_left
+        role: workspace_observation
+        placement: overhead
+      - id: overhead_right
+        role: workspace_observation
+        placement: overhead
+      - id: wrist
+        role: grasp_confirmation_and_close_view
+        placement: robot_wrist
+    notes: Camera calibration files and exact capture settings are supplied with the dataset.
+  robot:
+    manufacturer: FANUC
+    model: ER-4iA
+    role: grasp_and_sort
+  gripper:
+    manufacturer: SCHUNK
+    type: pneumatic_two_finger
+  digital_twin:
+    enabled: false
+    scope: arm_and_work_area
+    simulator: null
+    asset_root: null
+    stage: null
+    notes: No Problem 3 robot twin is present in data/csi_digital_twin_v1; configure the FANUC twin when its asset package is added.
+
+sorting:
+  target: repeatable_pick_and_place
+  object_classes: configurable
+  support_clutter: true
+  sort_rules: configurable
+
+evaluation:
+  primary_metrics:
+    - successful_picks_per_attempt
+    - placement_accuracy
+  secondary_metrics:
+    - cycle_time
+    - failed_grasp_recovery_rate
+    - unseen_object_performance
+
+model:
+  architecture: vision_guided_grasp_planner
+  annotation_format: detections_and_grasp_poses

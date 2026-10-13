@@ -1,0 +1,60 @@
+project:
+  name: innovation-lab
+  seed: 42
+
+paths:
+  data_root: data
+  csi_digital_twin_root: data/csi_digital_twin_v1
+  artifact_root: artifacts
+  model_root: models
+  output_root: outputs
+  log_root: logs
+
+compute:
+  device: auto
+  num_workers: 4
+  mixed_precision: true
+
+data:
+  use_real_data: true
+  use_synthetic_data: true
+  synthetic_source: isaac_sim
+  train_split: 0.70
+  validation_split: 0.15
+  test_split: 0.15
+  keep_runs_separate: true
+  randomize_synthetic_lighting: true
+
+digital_twin:
+  enabled: true
+  simulator: isaac_sim
+  simulator_version: "6.0.0"
+  container_sif: isaac-sim-6.0.0.sif
+  container_python: /isaac-sim/python.sh
+  container_mount: /workspace
+  asset_root: data/csi_digital_twin_v1
+  full_line_stage: data/csi_digital_twin_v1/csi_line.usda
+  render_tool: data/csi_digital_twin_v1/tools/render_example.py
+  output_root: outputs/digital_twin
+
+preprocessing:
+  image_size: [640, 480]
+  color_space: rgb
+  normalize: true
+  augment: true
+
+training:
+  batch_size: 16
+  epochs: 50
+  learning_rate: 0.0001
+  early_stopping_patience: 8
+  checkpoint_metric: validation_loss
+
+inference:
+  confidence_threshold: 0.5
+  save_visualizations: true
+
+logging:
+  level: INFO
+  save_predictions: true
+

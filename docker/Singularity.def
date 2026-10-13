@@ -1,0 +1,32 @@
+Bootstrap: docker
+From: nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04
+
+%files
+    pyproject.toml /workspace/pyproject.toml
+    uv.lock /workspace/uv.lock
+    README.md /workspace/README.md
+    main.py /workspace/main.py
+    configs /workspace/configs
+    scripts /workspace/scripts
+
+%environment
+    export PATH=/root/.local/bin:$PATH
+    export UV_LINK_MODE=copy
+    export PYTHONDONTWRITEBYTECODE=1
+    export PYTHONUNBUFFERED=1
+    export UV_PYTHON_DOWNLOADS=automatic
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH=/root/.local/bin:$PATH
+    export UV_PYTHON_DOWNLOADS=automatic
+    apt-get update
+    apt-get install -y --no-install-recommends git curl ca-certificates ffmpeg libgl1 libglib2.0-0 python3.10 python3.10-venv
+    rm -rf /var/lib/apt/lists/*
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    cd /workspace
+    uv sync --locked
+
+%runscript
+    cd /workspace
+    exec uv run python main.py "$@"

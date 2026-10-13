@@ -1,0 +1,16 @@
+base_config: common.yaml
+
+project:
+  name: innovation-lab
+  seed: 42
+
+paths:
+  data_root: data
+  artifact_root: artifacts
+  model_root: models
+  output_root: outputs
+  log_root: logs
+
+compute:
+  device: auto
+  num_workers: 4

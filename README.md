@@ -54,4 +54,46 @@ git clone <this repository's URL from the green "Code" button>
 - **Don't commit large datasets or model weights.** Keep them out with `.gitignore` and note in this README where to download them.
 - Before the finals, replace this README with your project: the problem, your approach, results, how to run it, and credits.
 
+## Development environment
+
+The repository uses `uv` for Python dependencies and Singularity for a reproducible GPU-capable environment on ROSIE.
+
+```text
+configs/                 Shared and problem-specific YAML configuration
+data/problem1/           Final vial inspection data (large assets stay untracked)
+data/problem2/           Fluid mixing data
+data/problem3/           Grasping and sorting data
+docker/                  Singularity definition and ROSIE launch scripts
+notebooks/               Exploratory analysis
+scripts/                 Validation and automation scripts
+artifacts/               Generated datasets and experiment artifacts (ignored)
+models/                  Model checkpoints (ignored)
+outputs/                 Predictions, renders, and reports (ignored)
+logs/                    Training and runtime logs (ignored)
+```
+
+Run the one-time setup from the repository root:
+
+```bash
+./setup_linux.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+.\setup_windows.ps1
+```
+
+The scripts create the shared directories, copy `.env.example` to `.env`, install the locked Python environment with `uv`, and run the environment check. On ROSIE, `docker/setup_singularity.sh` builds the SIF in place using Singularity's Docker bootstrap; no Docker daemon or image transfer is required. Isaac Sim and TAO are NVIDIA-managed launchables that may require Brev/CSI compute and NGC credentials; they are not silently installed into every laptop.
+
+Useful commands after setup:
+
+```bash
+uv run python main.py
+uv run jupyter lab
+./docker/problem1/run.sh shell
+```
+
+On ROSIE, use `docker/problem1/`, `docker/problem2/`, or `docker/problem3/` for problem-specific interactive runs. Isaac Sim has its own image workflow under `docker/isaac_sim/`; use an RTX-capable allocation for rendering.
+
 **Can't push or see this repository?** Open the [team workspace](https://dashboard.all-ai-network.org/j/L36HEH) and press the GitHub check button. If it still doesn't work, ping Brett Storoe in `#hackathon-general` on Slack.

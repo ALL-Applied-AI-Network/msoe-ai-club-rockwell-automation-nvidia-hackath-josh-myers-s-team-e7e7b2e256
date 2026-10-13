@@ -1,0 +1,103 @@
+base_config: common.yaml
+
+project:
+  experiment_name: fluid_mixing_baseline
+
+problem: fluid_mixing
+data:
+  directory: data/problem2
+  image_directory: data/problem2/images
+  video_directory: data/problem2/videos
+  metadata_file: data/problem2/metadata.csv
+  annotation_file: data/problem2/annotations.json
+  video_ids: [1, 2, 3, 4, 5]
+  labeled_vials: 30
+  recipe_count: 10
+
+digital_twin:
+  enabled: true
+  asset_root: data/csi_digital_twin_v1
+  stage: data/csi_digital_twin_v1/stations/fill_station/fill_station.usda
+  full_line_stage: data/csi_digital_twin_v1/csi_line.usda
+  camera_settings:
+    fill: data/csi_digital_twin_v1/cameras/FillCam.json
+    cap_seal: data/csi_digital_twin_v1/cameras/CapSealCam.json
+  cameras: [FillCam, CapSealCam]
+  frame_range: [1, 686]
+  fps: 30
+  default_frame: 686
+  render_size: [640, 480]
+  subframes: 8
+  lens_postprocess: false
+  output: outputs/digital_twin/problem2_fill.png
+
+components:
+  cameras:
+    synchronized: true
+    synchronization_key: timestamp
+    resolution: [640, 480]
+    video_fps: 30
+    still_interval_seconds: 2
+    views:
+      vial_fill:
+        enabled: true
+        role: fill_operation
+        calibration_file: null
+      tank_level:
+        enabled: true
+        role: tank_state
+        calibration_file: null
+      cap_seal:
+        enabled: true
+        role: finished_vial_check
+        calibration_file: null
+  tanks:
+    active: [T-100, T-200, T-400]
+    inactive: [T-300]
+    configured_colors:
+      T-100: clear
+      T-200: orange
+      T-400: blue
+  station:
+    nozzle_count: 1
+    digital_twin_scene: data/csi_digital_twin_v1/stations/fill_station/fill_station.usda
+
+recipes:
+  recipe_id_field: recipe_id
+  previous_recipe_field: previous_recipe_id
+  dispense_order_field: dispense_order
+  tank_volume_fields: [T-100, T-200, T-400]
+  fill_start_field: fill_start_time
+  fill_end_field: fill_end_time
+
+labels:
+  classes: [expected_color, unexpected_color, correct_fill, underfill, overfill, carryover]
+  fill_state_labels: [filling, not_filling]
+
+feature_windows:
+  carryover_history_vials: 1
+  tank_state_seconds_before_fill: 5
+  post_fill_observation_seconds: 5
+
+model:
+  architecture: multimodal_quality_inspection
+  inputs: [vial_fill, tank_level, cap_seal, recipe_metadata, previous_recipe_metadata]
+  use_recipe_context: true
+  explain_likely_cause: true
+
+training:
+  batch_size: 8
+  epochs: 50
+  split_strategy: leave_one_recipe_out
+  use_unlabeled_views_for_pretraining: false
+
+inference:
+  color_anomaly_threshold: 0.5
+  fill_level_tolerance_percent: 5
+  carryover_alert_threshold: 0.5
+
+evaluation:
+  primary_metrics: [defect_recall, defect_precision]
+  causal_explanation_metric: operator_verified_cause_accuracy
+  report_by_recipe: true
+
