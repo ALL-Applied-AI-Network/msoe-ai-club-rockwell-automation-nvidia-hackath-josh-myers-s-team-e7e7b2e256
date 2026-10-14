@@ -88,13 +88,21 @@ MODEL_DIR="$ROOT_DIR/models/Cosmos3-Nano"
 step 8 "Checking Cosmos3-Nano model at $MODEL_DIR"
 mkdir -p "$ROOT_DIR/models"
 if [[ ! -f "$MODEL_DIR/config.json" ]]; then
-  if [[ -n "${HF_TOKEN:-${HUGGINGFACE_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}" ]]; then
-    "$COSMOS_PYTHON" -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='nvidia/Cosmos3-Nano', local_dir='$MODEL_DIR')"
-    ok 'Downloaded Cosmos3-Nano weights.'
+  HF_TOKEN_VALUE="${HF_TOKEN:-${HUGGINGFACE_HUB_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}}"
+  if [[ -n "$HF_TOKEN_VALUE" ]]; then
+    export HF_TOKEN="$HF_TOKEN_VALUE"
+  elif "$COSMOS_ENV/bin/hf" auth whoami >/dev/null 2>&1; then
+    ok 'Using the existing Hugging Face CLI login.'
+  elif [[ -t 0 ]]; then
+    echo "Cosmos3-Nano is gated. Accept NVIDIA's model license on Hugging Face first."
+    "$COSMOS_ENV/bin/hf" auth login
   else
-    warn 'Cosmos3-Nano weights are not downloaded because no Hugging Face token is available.'
-    warn "Accept the NVIDIA model license, run '$COSMOS_ENV/bin/hf auth login', then run:"
-    warn "  $COSMOS_ENV/bin/hf download nvidia/Cosmos3-Nano --local-dir $MODEL_DIR"
+    warn 'Cosmos3-Nano weights are not downloaded because setup is noninteractive and Hugging Face is not authenticated.'
+    warn "Accept the NVIDIA model license, run '$COSMOS_ENV/bin/hf auth login', then rerun setup_linux.sh."
+  fi
+  if [[ -n "$HF_TOKEN_VALUE" || "$($COSMOS_ENV/bin/hf auth whoami >/dev/null 2>&1; echo $?)" == 0 ]]; then
+    "$COSMOS_ENV/bin/hf" download nvidia/Cosmos3-Nano --local-dir "$MODEL_DIR"
+    ok 'Downloaded Cosmos3-Nano weights.'
   fi
 else
   ok 'Cosmos3-Nano weights already exist.'
@@ -112,7 +120,7 @@ fi
 step 10 'Validating all three problem launch prerequisites'
 [[ -x "$ISAAC_DIR/python.sh" ]] || die "Missing Isaac launcher: $ISAAC_DIR/python.sh"
 [[ -x "$COSMOS_PYTHON" ]] || die "Missing Cosmos Python: $COSMOS_PYTHON"
-[[ -f "$MODEL_DIR/config.json" ]] || warn 'Problem 3 remains pending Cosmos3-Nano weights.'
+[[ -f "$MODEL_DIR/config.json" ]] || die "Cosmos3-Nano is incomplete. Run '$COSMOS_ENV/bin/hf auth login', accept NVIDIA's license, and rerun setup_linux.sh."
 [[ -x "$ROOT_DIR/docker/problem1/render_twin.sh" ]] || die 'Problem 1 launcher is not executable.'
 [[ -x "$ROOT_DIR/docker/problem2/render_twin.sh" ]] || die 'Problem 2 launcher is not executable.'
 [[ -x "$ROOT_DIR/docker/problem3/run.sh" ]] || die 'Problem 3 launcher is not executable.'
