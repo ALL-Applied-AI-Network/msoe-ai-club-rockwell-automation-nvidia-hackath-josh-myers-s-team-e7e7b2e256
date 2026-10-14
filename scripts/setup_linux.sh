@@ -64,13 +64,12 @@ COSMOS_PYTHON="$COSMOS_ENV/bin/python"
 step 6 "Preparing Cosmos3 environment at $COSMOS_ENV"
 mkdir -p "$(dirname "$COSMOS_ENV")"
 if [[ ! -x "$COSMOS_PYTHON" ]]; then
-  python3 -m venv "$COSMOS_ENV"
+  uv venv "$COSMOS_ENV" --python python3
 fi
-"$COSMOS_PYTHON" -m pip install --upgrade pip
-"$COSMOS_PYTHON" -m pip install \
+uv pip install --python "$COSMOS_PYTHON" \
   torch==2.8.0 torchvision==0.23.0 \
   --index-url https://download.pytorch.org/whl/cu129
-"$COSMOS_PYTHON" -m pip install \
+uv pip install --python "$COSMOS_PYTHON" \
   -r "$ROOT_DIR/fanuc_er4ia_sim/requirements-cosmos.txt" \
   'transformers>=4.57' accelerate safetensors huggingface_hub
 ok 'Cosmos Python dependencies are installed.'
@@ -82,7 +81,7 @@ if [[ ! -d "$COSMOS3_ROOT/.git" ]]; then
 fi
 [[ -d "$COSMOS3_ROOT/packages/transformers-cosmos3" ]] || \
   die "Cosmos framework checkout is missing packages/transformers-cosmos3: $COSMOS3_ROOT"
-"$COSMOS_PYTHON" -m pip install -e "$COSMOS3_ROOT/packages/transformers-cosmos3"
+uv pip install --python "$COSMOS_PYTHON" -e "$COSMOS3_ROOT/packages/transformers-cosmos3"
 ok 'NVIDIA Cosmos framework is installed.'
 
 MODEL_DIR="$ROOT_DIR/models/Cosmos3-Nano"

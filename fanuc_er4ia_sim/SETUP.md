@@ -41,13 +41,19 @@ To open the scene interactively, run `"$ISAAC/python.sh" build_scene.py`.
 
 ## 3. Cosmos3-Nano
 
-Use a separate environment with CUDA-enabled PyTorch, compatible Transformers,
-and NVIDIA's `transformers-cosmos3` package/framework. Obtain Cosmos3-Nano model
-weights separately; these large dependencies are not in the starter.
+Use a separate `uv` environment with CUDA-enabled PyTorch, compatible
+Transformers, and NVIDIA's `transformers-cosmos3` package/framework. Obtain
+Cosmos3-Nano model weights separately; these large dependencies are not in the
+starter.
 
 ```bash
 export COSMOS=/path/to/cosmos-environment/bin/python
-"$COSMOS" -m pip install -r requirements-cosmos.txt
+uv venv "$(dirname "$(dirname "$COSMOS")")"
+uv pip install --python "$COSMOS" \
+  torch==2.8.0 torchvision==0.23.0 \
+  --index-url https://download.pytorch.org/whl/cu129
+uv pip install --python "$COSMOS" \
+  -r requirements-cosmos.txt 'transformers>=4.57' accelerate safetensors
 export COSMOS3_NANO_PATH=/path/to/Cosmos3-Nano/snapshot
 ```
 
@@ -55,7 +61,7 @@ To download the gated repository into a shared project location, first accept
 NVIDIA's model license on Hugging Face and authenticate with a read token:
 
 ```bash
-"$COSMOS" -m pip install -U huggingface_hub
+uv pip install --python "$COSMOS" -U huggingface_hub
 "$COSMOS" -c 'from huggingface_hub import login; login()'
 "$COSMOS" -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="nvidia/Cosmos3-Nano", local_dir="../models/Cosmos3-Nano")'
 export COSMOS3_NANO_PATH="$PWD/../models/Cosmos3-Nano"
@@ -64,8 +70,6 @@ export COSMOS3_NANO_PATH="$PWD/../models/Cosmos3-Nano"
 Alternatively, use `hf auth login` and `hf download` if the standalone `hf`
 command is installed. Do not put the token itself in the repository or `.env`.
 
-If the environment uses uv instead of pip:
-`uv pip install --python "$COSMOS" -r requirements-cosmos.txt`.
 The snapshot must contain `config.json` and the model/processor files.
 If the framework package is not installed, set its checkout location:
 
