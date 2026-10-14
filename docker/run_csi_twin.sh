@@ -1,32 +1,43 @@
 #!/usr/bin/env bash
+
+#SBATCH --job-name=csi-twin
+#SBATCH --partition=teaching
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:t4:1
+#SBATCH --cpus-per-gpu=8
+#SBATCH --ntasks=1
+
 set -euo pipefail
 
-# Render the CSI USD twin with Isaac Sim. The project SIF is intentionally a
-# development image; Isaac Sim must be supplied separately through
-# ISAAC_SIM_SIF or an installed ISAAC_SIM_PYTHON executable.
+# Render a CSI USD twin with the shared standalone Isaac Sim installation.
+# Paths are kept on the host; no Isaac Sim container or /workspace bind is used.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TWIN_ROOT="/workspace/data/csi_digital_twin_v1"
-CAMERA="${TWIN_CAMERA:-FillCam}"
-STAGE="${TWIN_STAGE:-$TWIN_ROOT/csi_line.usda}"
-FRAME="${TWIN_FRAME:-1}"
-OUTPUT="${TWIN_OUTPUT:-/workspace/outputs/csi_${CAMERA,,}_${FRAME}.png}"
-SUBFRAMES="${TWIN_SUBFRAMES:-8}"
 
-TOOL="$TWIN_ROOT/tools/render_example.py"
-ARGS=("$TOOL" --camera "$CAMERA" --stage "$STAGE" --frame "$FRAME" --out "$OUTPUT" --subframes "$SUBFRAMES")
-
-if [[ -n "${ISAAC_SIM_PYTHON:-}" ]]; then
-  HOST_TOOL="$ROOT_DIR/data/csi_digital_twin_v1/tools/render_example.py"
-  HOST_STAGE="${STAGE#/workspace/}"
-  HOST_OUTPUT="${OUTPUT#/workspace/}"
-  ARGS=("$HOST_TOOL" --camera "$CAMERA" --stage "$ROOT_DIR/$HOST_STAGE" --frame "$FRAME" --out "$ROOT_DIR/$HOST_OUTPUT" --subframes "$SUBFRAMES")
-  exec "$ISAAC_SIM_PYTHON" "${ARGS[@]}"
+if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+  mkdir -p "$ROOT_DIR/logs"
+  exec sbatch --wait --chdir="$ROOT_DIR" \
+    --output="$ROOT_DIR/logs/csi-twin-%j.out" \
+    --error="$ROOT_DIR/logs/csi-twin-%j.err" \
+    "$0" "$@"
 fi
 
-ISAAC_SIM_SIF="${ISAAC_SIM_SIF:-$ROOT_DIR/isaac-sim-6.0.0.sif}"
-[[ -f "$ISAAC_SIM_SIF" ]] || { echo "Isaac Sim SIF not found: $ISAAC_SIM_SIF" >&2; exit 1; }
+TOOL="$ROOT_DIR/data/csi_digital_twin_v1/tools/render_example.py"
+CAMERA="${TWIN_CAMERA:-FillCam}"
+STAGE="${TWIN_STAGE:-$ROOT_DIR/data/csi_digital_twin_v1/csi_line.usda}"
+FRAME="${TWIN_FRAME:-1}"
+OUTPUT="${TWIN_OUTPUT:-$ROOT_DIR/outputs/csi_${CAMERA,,}_${FRAME}.png}"
+SUBFRAMES="${TWIN_SUBFRAMES:-8}"
 
-export ISAAC_SIM_SIF
-exec "$ROOT_DIR/docker/isaac_sim/run.sh" "${ARGS[@]}"
+[[ -f "$TOOL" ]] || { echo "Twin renderer not found: $TOOL" >&2; exit 1; }
+[[ -f "$STAGE" ]] || { echo "Twin stage not found: $STAGE" >&2; exit 1; }
+mkdir -p "$(dirname "$OUTPUT")"
 
+exec "$ROOT_DIR/docker/isaac_sim/run.sh" \
+  "$TOOL" \
+  --camera "$CAMERA" \
+  --stage "$STAGE" \
+  --frame "$FRAME" \
+  --out "$OUTPUT" \
+  --subframes "$SUBFRAMES" \
+  "$@"

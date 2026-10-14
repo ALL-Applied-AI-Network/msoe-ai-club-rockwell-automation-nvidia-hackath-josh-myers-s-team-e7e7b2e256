@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIF_PATH="${SIF_PATH:-$ROOT_DIR/innovation-lab.sif}"
 
-echo "== Singularity digital-twin setup =="
+echo "== Singularity project-environment setup =="
 
 if ! command -v singularity >/dev/null 2>&1 && ! command -v apptainer >/dev/null 2>&1; then
   if [[ -f /etc/profile.d/modules.sh ]]; then
@@ -43,4 +43,4 @@ fi
 
 echo "Validating the image..."
 "$RUNTIME" inspect "$SIF_PATH" >/dev/null
-echo "Digital twin image is ready: $SIF_PATH"
+echo "Project environment image is ready: $SIF_PATH"

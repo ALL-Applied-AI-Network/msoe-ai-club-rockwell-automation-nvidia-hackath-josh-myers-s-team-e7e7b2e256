@@ -1,41 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Run the shared standalone Isaac Sim installation inside an existing ROSIE
+# allocation. Submit docker/isaac_sim/submit.sh from a management node.
+# This launcher intentionally does not use a Singularity/Apptainer Isaac image.
+
 SCRIPT_PATH="$(realpath "$0")"
 ROOT_DIR="${ISAAC_SIM_ROOT_DIR:-$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)}"
 ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
-ISAAC_SIM_SIF="${ISAAC_SIM_SIF:-$ROOT_DIR/isaac-sim-6.0.0.sif}"
-ISAAC_SIM_PYTHON="${ISAAC_SIM_PYTHON_IN_CONTAINER:-/isaac-sim/python.sh}"
-ISAAC_SIM_SHELL="${ISAAC_SIM_SHELL_IN_CONTAINER:-/bin/bash}"
+ISAAC_SIM_PYTHON="${ISAAC_SIM_PYTHON:-$ROOT_DIR/models/isaacsim_6.1/python.sh}"
 
-if [[ -z "${SLURM_JOB_ID:-}" ]]; then
-  SRUN_ARGS=(
-    --partition=teaching \
-    --gres=gpu:t4:1 \
-    --cpus-per-gpu=8 \
-    --chdir="$ROOT_DIR" \
-    --ntasks=1
-  )
-  [[ "${1:-}" == shell ]] && SRUN_ARGS+=(--pty)
-  exec srun "${SRUN_ARGS[@]}" "$SCRIPT_PATH" "$@"
+if [[ ! -x "$ISAAC_SIM_PYTHON" ]]; then
+  echo "Shared Isaac Sim launcher not found or not executable: $ISAAC_SIM_PYTHON" >&2
+  echo "Install it with: $ROOT_DIR/scripts/install_isaac_sim_standalone.sh" >&2
+  exit 1
 fi
 
-if command -v apptainer >/dev/null 2>&1; then RUNTIME=apptainer
-elif command -v singularity >/dev/null 2>&1; then RUNTIME=singularity
-else echo "Singularity or Apptainer is required." >&2; exit 1; fi
-[[ -f "$ISAAC_SIM_SIF" ]] || { echo "Isaac Sim SIF not found: $ISAAC_SIM_SIF" >&2; exit 1; }
-
-BIND_ARGS=(-B "$ROOT_DIR:/workspace")
-[[ -d /data ]] && BIND_ARGS+=(-B /data:/data)
-ENV_ARGS=(--env ACCEPT_EULA=Y --env PRIVACY_CONSENT=Y)
+cd "$ROOT_DIR"
+export ACCEPT_EULA="${ACCEPT_EULA:-Y}"
+export PRIVACY_CONSENT="${PRIVACY_CONSENT:-Y}"
+export ISAAC_SIM_PYTHON
 
 if [[ "${1:-}" == shell ]]; then
-  exec "$RUNTIME" shell --nv "${ENV_ARGS[@]}" "${BIND_ARGS[@]}" "$ISAAC_SIM_SIF"
+  exec bash -l
 fi
 
 [[ $# -gt 0 ]] || {
-  exec "$ROOT_DIR/docker/problem2/render_twin.sh"
+  echo "Usage: $0 [shell] <python-script> [args...]" >&2
+  echo "Example: $0 data/csi_digital_twin_v1/tools/render_example.py --camera FillCam" >&2
+  exit 2
 }
-exec "$RUNTIME" exec --nv "${ENV_ARGS[@]}" "${BIND_ARGS[@]}" "$ISAAC_SIM_SIF" \
-  "$ISAAC_SIM_SHELL" "$ISAAC_SIM_PYTHON" "$@"
 
+exec "$ISAAC_SIM_PYTHON" "$@"

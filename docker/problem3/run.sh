@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Problem 3 is the FANUC ER-4iA simulation, not a project-SIF command.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="configs/problem3_grasping_sorting.yaml" \
-  exec "$SCRIPT_DIR/../run_singularity.sh" "${@:-shell}"
-
+exec "$SCRIPT_DIR/sim.sh" "$@"

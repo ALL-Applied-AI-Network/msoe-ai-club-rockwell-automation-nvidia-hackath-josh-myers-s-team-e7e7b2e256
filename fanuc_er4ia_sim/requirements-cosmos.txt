@@ -1,0 +1,8 @@
+# Install alongside a CUDA-enabled PyTorch and NVIDIA transformers-cosmos3.
+# These are the geometry/image dependencies used inside the Cosmos interpreter.
+numpy>=2.0
+scipy>=1.14
+opencv-python-headless>=4.10
+accelerate>=1.10
+transformers>=4.57
+safetensors>=0.5

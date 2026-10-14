@@ -56,18 +56,18 @@ git clone <this repository's URL from the green "Code" button>
 
 ## Development environment
 
-The repository uses `uv` for Python dependencies and Singularity for a reproducible GPU-capable environment on ROSIE.
+The repository uses `uv` for Python dependencies and Singularity for the general project environment on ROSIE. Isaac Sim and Cosmos3-Nano are stored under the ignored `models/` directory.
 
 ```text
 configs/                 Shared and problem-specific YAML configuration
 data/problem1/           Final vial inspection data (large assets stay untracked)
 data/problem2/           Fluid mixing data
 data/problem3/           Grasping and sorting data
-docker/                  Singularity definition and ROSIE launch scripts
+docker/                  Project SIF and shared Isaac Sim launch scripts
 notebooks/               Exploratory analysis
 scripts/                 Validation and automation scripts
 artifacts/               Generated datasets and experiment artifacts (ignored)
-models/                  Model checkpoints (ignored)
+models/                  Isaac Sim and Cosmos checkpoints (ignored)
 outputs/                 Predictions, renders, and reports (ignored)
 logs/                    Training and runtime logs (ignored)
 ```
@@ -84,7 +84,7 @@ On Windows PowerShell:
 .\setup_windows.ps1
 ```
 
-The scripts create the shared directories, copy `.env.example` to `.env`, install the locked Python environment with `uv`, and run the environment check. On ROSIE, `docker/setup_singularity.sh` builds the SIF in place using Singularity's Docker bootstrap; no Docker daemon or image transfer is required. Isaac Sim and TAO are NVIDIA-managed launchables that may require Brev/CSI compute and NGC credentials; they are not silently installed into every laptop.
+The Linux setup script creates the required environments, installs Isaac Sim under `models/isaacsim_6.1`, prepares the Cosmos3 environment and model path, and runs validation checks. Hugging Face authentication is required before Cosmos3-Nano weights can be downloaded. On ROSIE, the general project SIF remains optional and is built separately with `docker/setup_singularity.sh`.
 
 Useful commands after setup:
 
@@ -94,6 +94,34 @@ uv run jupyter lab
 ./docker/problem1/run.sh shell
 ```
 
-On ROSIE, use `docker/problem1/`, `docker/problem2/`, or `docker/problem3/` for problem-specific interactive runs. Isaac Sim has its own image workflow under `docker/isaac_sim/`; use an RTX-capable allocation for rendering.
+On ROSIE, use `docker/problem1/`, `docker/problem2/`, or `docker/problem3/` for problem-specific project runs. Problem 1 and 2 render the CSI twin with the shared Isaac Sim installation; Problem 3 runs the in-repository FANUC ER-4iA simulation from `fanuc_er4ia_sim/`.
+
+To render with the standalone Isaac Sim 6.1.0 install on ROSIE, run this once
+from the repository root. The archive is large and the extraction can take
+several minutes on the shared filesystem:
+
+```bash
+./scripts/install_isaac_sim_standalone.sh
+test -x models/isaacsim_6.1/kit/python/bin/python3
+```
+
+Then submit the render as a Slurm batch job from a management node:
+
+```bash
+./docker/problem2/render_twin.sh
+ls -lh outputs/problem2_fillcam.png
+```
+
+The launcher requests a teaching-node T4 allocation with `sbatch`, waits for
+completion, and writes the job logs under `logs/`:
+
+```bash
+./docker/problem2/render_twin.sh
+ls -lh outputs/problem2_fillcam.png
+```
+
+If `python.sh` reports that `kit/python/bin/python3` is missing, the install
+was interrupted or incomplete. Wait for the installer to finish, then rerun
+the installer; it resumes the download and safely completes extraction.
 
 **Can't push or see this repository?** Open the [team workspace](https://dashboard.all-ai-network.org/j/L36HEH) and press the GitHub check button. If it still doesn't work, ping Brett Storoe in `#hackathon-general` on Slack.
