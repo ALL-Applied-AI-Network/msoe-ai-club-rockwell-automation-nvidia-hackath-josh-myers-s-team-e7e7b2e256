@@ -93,13 +93,20 @@ planning, physical execution, report validation, and video encoding in one
 T4 allocation by default:
 
 ```bash
-export COSMOS=/path/to/cosmos-environment/bin/python
-./docker/problem3/run.sh output/runs/stack_01
+./docker/problem3/run.sh
 ```
 
-Cosmos3-Nano can shard across multiple T4s. Request the number of GPUs before
-launching from a management node; the default `device_map=auto` then spreads
-the model across every GPU Slurm exposes to the job:
+The launcher automatically selects the available GPU count from the Slurm
+allocation or teaching partition and writes each run to a timestamped directory
+under `output/runs/`. Override the count or output directory when needed:
+
+```bash
+PROBLEM3_GPUS=2 ./docker/problem3/run.sh output/runs/stack_01
+```
+
+Cosmos3-Nano can shard across multiple T4s. The default `device_map=auto` then
+spreads the model across every GPU Slurm exposes to the job. Set
+`PROBLEM3_GPUS` only when you want to override automatic selection:
 
 ```bash
 export COSMOS="$HOME/.venvs/cosmos3/bin/python"

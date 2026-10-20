@@ -131,4 +131,4 @@ printf 'Log: %s\n' "$LOG_FILE"
 printf '\nRun problems from the repository root:\n'
 printf '  ./docker/problem1/render_twin.sh\n'
 printf '  ./docker/problem2/render_twin.sh\n'
-printf '  PROBLEM3_GPUS=2 ./docker/problem3/run.sh output/runs/stack_01\n'
+printf '  ./docker/problem3/run.sh\n'

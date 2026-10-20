@@ -19,8 +19,26 @@ ISAAC="${ISAAC:-$PROJECT_ROOT/models/isaacsim_6.1}"
 COSMOS="${COSMOS:-${COSMOS3_PYTHON:-$HOME/.venvs/cosmos3/bin/python}}"
 COSMOS3_NANO_PATH="${COSMOS3_NANO_PATH:-$PROJECT_ROOT/models/Cosmos3-Nano}"
 HOST_PYTHON="${HOST_PYTHON:-$PROJECT_ROOT/.venv/bin/python}"
-PROBLEM3_GPUS="${PROBLEM3_GPUS:-1}"
 ISAAC_SIM_ALLOCATE="${ISAAC_SIM_ALLOCATE:-1}"
+
+# Use an explicit count when supplied. Otherwise determine the count from the
+# current allocation or, on a management node, from the teaching partition.
+if [[ -z "${PROBLEM3_GPUS:-}" ]]; then
+  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    if [[ -n "${SLURM_GPUS_ON_NODE:-}" ]]; then
+      PROBLEM3_GPUS="$(grep -oE '[0-9]+' <<< "$SLURM_GPUS_ON_NODE" | tail -n 1 || true)"
+    elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+      PROBLEM3_GPUS="$(awk -F, '{print NF}' <<< "$CUDA_VISIBLE_DEVICES")"
+    fi
+  elif command -v sinfo >/dev/null 2>&1; then
+    PROBLEM3_GPUS="$(sinfo -h -p teaching -o '%G' 2>/dev/null \
+      | grep -oE 'gpu:[^:]+:[0-9]+' \
+      | grep -oE '[0-9]+$' \
+      | sort -nr \
+      | head -n 1 || true)"
+  fi
+fi
+PROBLEM3_GPUS="${PROBLEM3_GPUS:-2}"
 
 if [[ "${1:-}" == --in-allocation ]]; then
   shift
@@ -75,6 +93,10 @@ if [[ -z "${SLURM_JOB_ID:-}" && "$ISAAC_SIM_ALLOCATE" == 1 ]]; then
     --output="$PROJECT_ROOT/logs/problem3-%j.out" \
     --error="$PROJECT_ROOT/logs/problem3-%j.err" \
     "$SCRIPT_PATH" --in-allocation "$@"
+fi
+
+if [[ "$#" -eq 0 ]]; then
+  set -- "$PROJECT_ROOT/output/runs/cube_stack_$(date +%Y%m%d_%H%M%S)"
 fi
 
 export ISAAC FANUC_SIM_ROOT HOST_PYTHON COSMOS COSMOS3_NANO_PATH PROBLEM3_GPUS
