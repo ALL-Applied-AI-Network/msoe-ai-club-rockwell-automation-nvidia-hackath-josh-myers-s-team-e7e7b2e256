@@ -8,8 +8,7 @@ from .config import (
 )
 from .core.DigitalTwinController import DigitalTwinController
 from .core.DigitalTwinDataCollector import DigitalTwinDataCollector
-from .core.DigitalEvaluator import DigitalEvaluator
-from .core.Evaluator import Evaluator
+from .core.Evaluator import DigitalEvaluator, Evaluator, RealityEvaluator
 from .core.MaskingModel import MaskingModel
 from .core.models import (
     Annotation,
@@ -22,7 +21,6 @@ from .core.models import (
     TrialResult,
 )
 from .core.RealityController import RealityController
-from .core.RealityEvaluator import RealityEvaluator
 from .core.RobotController import RobotController
 from .core.SAMDataLabeler import SAMDataLabeler
 from .core.YOLOModel import YOLOModel
@@ -34,9 +32,9 @@ __all__ = [
     "CameraDefinition",
     "CameraFrame",
     "Detection",
+    "DigitalEvaluator",
     "DigitalTwinController",
     "DigitalTwinDataCollector",
-    "DigitalEvaluator",
     "Evaluator",
     "MaskingModel",
     "ModelArtifact",
