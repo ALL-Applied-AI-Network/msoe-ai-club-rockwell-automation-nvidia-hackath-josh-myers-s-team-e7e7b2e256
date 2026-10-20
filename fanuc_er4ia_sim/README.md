@@ -43,4 +43,15 @@ The actuator has **6 mm travel per jaw**, giving a **12 mm maximum straight-face
 gap**. Square yaw is equivalent every 90°. Keep these constraints when editing.
 Changes to layout, camera, cube size or contact geometry need a fresh run.
 
+Combine a directory of PNG or JPEG test images into a video with the host
+environment. Numbered filenames are ordered naturally (for example, `frame2`
+before `frame10`):
+
+```bash
+.venv/bin/python encode_video.py \
+  --frames ../output/runs/test_run/images \
+  --out ../output/runs/test_run/test_video.mp4 \
+  --fps 30
+```
+
 Rebuild this media-free package with `./share.sh --output ../starter.zip`.

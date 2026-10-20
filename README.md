@@ -96,6 +96,68 @@ uv run jupyter lab
 
 On ROSIE, use `docker/problem1/`, `docker/problem2/`, or `docker/problem3/` for problem-specific project runs. Problem 1 and 2 render the CSI twin with the shared Isaac Sim installation; Problem 3 runs the in-repository FANUC ER-4iA simulation from `fanuc_er4ia_sim/`.
 
+## Lightweight cube detector
+
+The sorting runs can provide **draft teacher labels** for a small YOLO26n cube
+detector. These are pseudo-labels: inspect the generated `previews/` and correct
+the YOLO text files under `labels/` before training. For Isaac Sim captures with
+saved camera calibration and scene poses, use projected simulator ground truth
+instead; this avoids teacher-model labeling errors. The exporter can hold out
+whole capture groups so related views do not leak across splits.
+
+Collect multiple varied captures first (different placements, cube rotations,
+lighting and backgrounds). Then build a dataset from their run directories:
+
+```bash
+uv run python scripts/build_yolo_dataset.py \
+  --runs output/runs/capture_01 output/runs/capture_02 output/runs/capture_03 \
+  --output artifacts/cube_yolo_v1 \
+  --val-fraction 0.2
+```
+
+The initial classes are `yellow_cube`, `blue_cube`, and `red_cube`; caps and
+tubes are ignored. Review `artifacts/cube_yolo_v1/previews/`, edit any incorrect
+box/class labels in `labels/train` and `labels/val`, and keep all splits grouped
+by capture run. A validation split requires at least two runs.
+
+For a multi-view Isaac Sim capture with `train/` and `val/` groups, project the
+saved simulator poses and export a group-held-out dataset like this:
+
+```bash
+uv run python scripts/project_sim_ground_truth.py \
+  --runs output/runs/cube_views/train/view_* output/runs/cube_views/val/view_*
+uv run python scripts/build_yolo_dataset.py \
+  --runs output/runs/cube_views/train/view_* output/runs/cube_views/val/view_* \
+  --detections-name sim_ground_truth_detections.json \
+  --validation-group val \
+  --output artifacts/cube_yolo_sim_gt
+```
+
+Check the exported previews before training, including with simulator ground
+truth: projection labels depend on correct capture poses and camera calibration.
+To try Meta SAM 3.1 text-prompted segmentation as another label source, see
+the SAM 3.1 setup and labeling instructions in
+[`fanuc_er4ia_sim/SETUP.md`](fanuc_er4ia_sim/SETUP.md#4-sam-31-cube-labels).
+
+Fine-tune pretrained YOLO26 nano weights. Including `--extra yolo` also ensures
+the optional trainer is installed when this command runs in a fresh Slurm
+environment:
+
+```bash
+uv run --extra yolo python scripts/train_yolo_student.py \
+  --data artifacts/cube_yolo_v1/data.yaml \
+  --device 0 \
+  --imgsz 1280 \
+  --epochs 100 \
+  --batch 4
+```
+
+The larger default image size preserves detail for small cubes; tune it and the
+batch size for the target GPU. Training/evaluation is only meaningful after
+collecting and reviewing a sufficiently diverse dataset. This detector predicts
+image boxes and colours; it does not replace the calibrated camera geometry
+used to estimate tabletop position and cube yaw.
+
 To render with the standalone Isaac Sim 6.1.0 install on ROSIE, run this once
 from the repository root. The archive is large and the extraction can take
 several minutes on the shared filesystem:

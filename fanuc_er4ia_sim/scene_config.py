@@ -324,6 +324,16 @@ def hackathon_cubes(seed):
     return cubes
 
 
+def sample_capture_view(seed):
+    """Return a repeatable safe cube layout and varied square orientations."""
+    import random
+
+    cubes = hackathon_cubes(seed)
+    yaw_rng = random.Random(seed + 1_000_003)
+    yaws = [yaw_rng.uniform(-45.0, 45.0) for _ in cubes]
+    return cubes, yaws
+
+
 SORT_CUBES = hackathon_cubes(CUBE_LAYOUT_SEED)
 # Tip enters above the flange. The straight retaining lip grips the plug.
 CAP_PICK_CLEARANCE = 0.001

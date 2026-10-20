@@ -4,5 +4,5 @@ numpy>=2.0
 scipy>=1.14
 opencv-python-headless>=4.10
 accelerate>=1.10
-transformers>=4.57
+transformers>=4.57,<5
 safetensors>=0.5

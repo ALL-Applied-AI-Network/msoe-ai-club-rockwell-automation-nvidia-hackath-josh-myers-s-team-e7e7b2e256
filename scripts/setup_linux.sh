@@ -71,7 +71,7 @@ uv pip install --python "$COSMOS_PYTHON" \
   --index-url https://download.pytorch.org/whl/cu129
 uv pip install --python "$COSMOS_PYTHON" \
   -r "$ROOT_DIR/fanuc_er4ia_sim/requirements-cosmos.txt" \
-  'transformers>=4.57' accelerate safetensors huggingface_hub
+  'transformers>=4.57,<5' accelerate safetensors huggingface_hub
 ok 'Cosmos Python dependencies are installed.'
 
 COSMOS3_ROOT="${COSMOS3_ROOT:-$HOME/cosmos-framework}"

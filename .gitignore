@@ -17,3 +17,7 @@ docker/.cache/
 # Keep the directory layout visible without committing large assets.
 !data/**/
 !data/**/.gitkeep
+
+# Local simulation outputs and downloaded model checkpoints.
+output/
+weights/

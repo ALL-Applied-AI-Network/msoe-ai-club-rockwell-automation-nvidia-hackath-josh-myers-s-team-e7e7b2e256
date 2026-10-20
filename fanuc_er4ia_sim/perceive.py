@@ -162,10 +162,14 @@ def audit_stack_colours(model, processor, image_path, parsed, run):
         for obj in objects:
             for key in ("center", "bbox"):
                 if obj.get(key) is not None:
-                    obj[key] = [
+                    converted = [
                         (v + x_offset) / W if j % 2 == 0 else v / H
                         for j, v in enumerate(pixels(obj[key]))
                     ]
+                    if key == "bbox" and len(converted) == 4:
+                        x0, y0, x1, y1 = converted
+                        converted = [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)]
+                    obj[key] = converted
         return objects
 
     parsed["objects"] = normalize(parsed.get("objects", []), W, H)
@@ -683,6 +687,42 @@ def canonicalise(obj):
     return obj
 
 
+def normalise_label_coordinates(parsed, image_path):
+    """Convert model grid/pixel boxes to unit-normalized dataset coordinates."""
+    import cv2
+    from plan_grasps import detect_coord_convention
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(image_path)
+    height, width = image.shape[:2]
+    convention, _ = detect_coord_convention(parsed, width, height)
+    if convention == "pixel":
+        scales = (width, height)
+    elif convention == "grid1000":
+        scales = (1000.0, 1000.0)
+    else:
+        scales = (1.0, 1.0)
+
+    for obj in parsed.get("objects", []):
+        if not isinstance(obj, dict):
+            continue
+        for key in ("center", "bbox"):
+            values = obj.get(key)
+            if not isinstance(values, list):
+                continue
+            converted = [
+                float(value) / scales[index % 2]
+                for index, value in enumerate(values)
+            ]
+            if key == "bbox" and len(converted) == 4:
+                x0, y0, x1, y1 = converted
+                converted = [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)]
+            obj[key] = converted
+    parsed["coordinate_convention"] = "unit"
+    return parsed
+
+
 def parse_json(text):
     """Pull the first JSON object out of the reply, tolerating fences/prose."""
     t = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
@@ -766,6 +806,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="run")
     ap.add_argument(
+        "--runs",
+        nargs="+",
+        help="process multiple run directories after loading Cosmos only once",
+    )
+    ap.add_argument(
         "--gpu",
         type=int,
         default=None,
@@ -792,72 +837,104 @@ if __name__ == "__main__":
         action="store_true",
         help="identify coloured cubes for the hackathon tower task",
     )
+    ap.add_argument(
+        "--dataset-labels",
+        action="store_true",
+        help="label cube boxes/colours without the robot pose-audit passes",
+    )
+    ap.add_argument(
+        "--audit-dataset-labels",
+        action="store_true",
+        help="audit existing detections.json files for missing cube colours",
+    )
     a = ap.parse_args()
+    label_modes = (a.stack_cubes, a.dataset_labels, a.audit_dataset_labels)
+    if sum(label_modes) > 1:
+        ap.error("choose only one cube-labeling mode")
 
-    run = Path(a.run)
-    run.mkdir(parents=True, exist_ok=True)
-    img = Path(a.image) if a.image else run / "world_camera.png"
+    runs = [Path(path) for path in a.runs] if a.runs else [Path(a.run)]
+    if a.image and len(runs) != 1:
+        ap.error("--image can only be used with a single run")
+    if a.audit_dataset_labels and a.image:
+        ap.error("--image cannot be used when auditing saved run detections")
     if a.inventory:
         prompt, stem, budget = INVENTORY_PROMPT, "inventory", 600
     elif a.verify:
         prompt, stem, budget = VERIFY_PROMPT, "verify", 600
-    elif a.stack_cubes:
+    elif a.stack_cubes or a.dataset_labels or a.audit_dataset_labels:
         prompt, stem, budget = STACK_PROMPT, "detections", 3500
     elif a.sort:
         prompt, stem, budget = SORT_PROMPT, "detections", 6500
     else:
         prompt, stem, budget = PROMPT, "detections", 3000
     model, processor = load_model(a.gpu)
-    # detection replies are pretty-printed JSON and run long; 8 objects with
-    # bboxes overflowed a 1400-token budget mid-object and failed to parse
-    raw = ask(model, processor, img, prompt, max_new_tokens=budget)
+    for run in runs:
+        run.mkdir(parents=True, exist_ok=True)
+        img = Path(a.image) if a.image else run / "world_camera.png"
+        if a.audit_dataset_labels:
+            detections_path = run / "detections.json"
+            parsed = canonicalise(json.loads(detections_path.read_text()))
+            parsed = audit_stack_colours(model, processor, img, parsed, run)
+            parsed["model"] = "Cosmos3-Nano"
+            parsed["task"] = "cube_detection"
+        else:
+            # detection replies are pretty-printed JSON and run long; 8 objects
+            # with bboxes overflowed a 1400-token budget and failed to parse
+            raw = ask(model, processor, img, prompt, max_new_tokens=budget)
 
-    (run / f"{stem}_raw.txt").write_text(raw)
-    parsed = parse_json(raw)
-    if parsed is None and not (a.verify or a.inventory):
-        objs = salvage_objects(raw)
-        if objs:
-            parsed = {
-                "objects": [
-                    o for o in objs if o.get("category") in ("cube", "cap", "vial")
-                ],
-                "bins": [o for o in objs if o.get("category") == "bin"],
-            }
-            print(
-                f"[perceive] reply was malformed; salvaged "
-                f"{len(parsed['objects'])} complete entries"
-            )
-    if parsed is None:
-        print(f"[perceive] FAILED to parse JSON; raw reply in {stem}_raw.txt")
-        print(raw[:800])
-        sys.exit(1)
-    parsed = canonicalise(parsed)
-    if a.stack_cubes:
-        parsed = audit_stack_colours(model, processor, img, parsed, run)
-        parsed = inspect_cube_poses(model, processor, img, parsed, run)
-        parsed["model"] = "Cosmos3-Nano"
-        parsed["task"] = "cube_stack"
-    if a.sort and not (a.verify or a.inventory):
-        parsed = inspect_sort_objects(model, processor, img, parsed, run)
-    with open(run / f"{stem}.json", "w") as f:
-        json.dump(parsed, f, indent=2)
+            (run / f"{stem}_raw.txt").write_text(raw)
+            parsed = parse_json(raw)
+            if parsed is None and not (a.verify or a.inventory):
+                objs = salvage_objects(raw)
+                if objs:
+                    parsed = {
+                        "objects": [
+                            o
+                            for o in objs
+                            if o.get("category") in ("cube", "cap", "vial")
+                        ],
+                        "bins": [o for o in objs if o.get("category") == "bin"],
+                    }
+                    print(
+                        f"[perceive] reply was malformed; salvaged "
+                        f"{len(parsed['objects'])} complete entries"
+                    )
+            if parsed is None:
+                print(f"[perceive] FAILED to parse JSON in {run}; raw reply saved.")
+                print(raw[:800])
+                sys.exit(1)
+            parsed = canonicalise(parsed)
+        if a.dataset_labels:
+            parsed = normalise_label_coordinates(parsed, img)
+            parsed = audit_stack_colours(model, processor, img, parsed, run)
+            parsed["model"] = "Cosmos3-Nano"
+            parsed["task"] = "cube_detection"
+        elif a.stack_cubes:
+            parsed = audit_stack_colours(model, processor, img, parsed, run)
+            parsed = inspect_cube_poses(model, processor, img, parsed, run)
+            parsed["model"] = "Cosmos3-Nano"
+            parsed["task"] = "cube_stack"
+        if a.sort and not (a.verify or a.inventory):
+            parsed = inspect_sort_objects(model, processor, img, parsed, run)
+        with open(run / f"{stem}.json", "w") as f:
+            json.dump(parsed, f, indent=2)
 
-    if a.inventory:
-        print("[perceive] bin inventory:")
-        for it in parsed.get("items", []):
-            print(f"   {it.get('count', '?')} x {it.get('object', '?')}")
-        print(f"   total: {parsed.get('total_items')}")
-        if parsed.get("notes"):
-            print(f"   notes: {parsed['notes']}")
-    elif a.verify:
-        print("[perceive] verification:")
-        for k, v in parsed.items():
-            print(f"   {k}: {v}")
-    else:
-        n = len(parsed.get("objects", []))
-        print(f"[perceive] parsed {n} objects, bins={len(parsed.get('bins', []))}")
-        for o in parsed.get("objects", [])[:15]:
-            print(
-                f"   {o.get('label','?'):20s} {o.get('category','?'):8s} "
-                f"center={o.get('center')}"
-            )
+        if a.inventory:
+            print("[perceive] bin inventory:")
+            for it in parsed.get("items", []):
+                print(f"   {it.get('count', '?')} x {it.get('object', '?')}")
+            print(f"   total: {parsed.get('total_items')}")
+            if parsed.get("notes"):
+                print(f"   notes: {parsed['notes']}")
+        elif a.verify:
+            print("[perceive] verification:")
+            for k, v in parsed.items():
+                print(f"   {k}: {v}")
+        else:
+            n = len(parsed.get("objects", []))
+            print(f"[perceive] {run}: parsed {n} objects")
+            for o in parsed.get("objects", [])[:15]:
+                print(
+                    f"   {o.get('label','?'):20s} {o.get('category','?'):8s} "
+                    f"center={o.get('center')}"
+                )
