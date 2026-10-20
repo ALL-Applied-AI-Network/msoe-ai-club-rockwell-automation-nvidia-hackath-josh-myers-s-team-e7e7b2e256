@@ -35,11 +35,12 @@ components:
     simulator: null
     asset_root: null
     stage: null
-    notes: No Problem 3 robot twin is present in data/csi_digital_twin_v1; configure the FANUC twin when its asset package is added.
-
+    
 sorting:
   target: repeatable_pick_and_place
-  object_classes: configurable
+  object_classes:
+    - cap
+    - vial
   support_clutter: true
   sort_rules: configurable
 
@@ -55,3 +56,6 @@ evaluation:
 model:
   architecture: vision_guided_grasp_planner
   annotation_format: detections_and_grasp_poses
+  class_names:
+    - cap
+    - vial
