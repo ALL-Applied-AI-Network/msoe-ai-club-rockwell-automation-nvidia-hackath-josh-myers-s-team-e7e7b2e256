@@ -54,6 +54,13 @@ class OverheadCameraFrame(CameraFrame):
 
 
 @dataclass(frozen=True)
+class SideCameraFrame(CameraFrame):
+    """Frame captured by a configured side-view camera."""
+
+    expected_placement: ClassVar[str] = "side"
+
+
+@dataclass(frozen=True)
 class ArmCameraFrame(CameraFrame):
     """Frame captured by the camera mounted on the robot arm/wrist."""
 
@@ -67,6 +74,7 @@ class Annotation:
     segmentation: list[tuple[float, float]] | None = None
     confidence: float = 1.0
     source: str = "synthetic_sam3"
+    segmentation_mask: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -105,3 +113,65 @@ class TrialResult:
     cycle_time_s: float | None
     recovery_used: bool = False
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class SpawnedObject:
+    category: str
+    class_name: str
+    position: tuple[float, float, float]
+    yaw_deg: float = 0.0
+    orientation: str = "upright"
+    color: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "class_name": self.class_name,
+            "position": list(self.position),
+            "yaw_deg": float(self.yaw_deg),
+            "orientation": self.orientation,
+            "color": self.color,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SpawnedObject":
+        return cls(
+            category=str(data["category"]),
+            class_name=str(data["class_name"]),
+            position=tuple(float(p) for p in data["position"]),
+            yaw_deg=float(data.get("yaw_deg", 0.0)),
+            orientation=str(data.get("orientation", "upright")),
+            color=data.get("color"),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
+@dataclass(frozen=True)
+class SceneSpec:
+    prompt: str
+    objects: tuple[SpawnedObject, ...]
+    seed: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prompt": self.prompt,
+            "seed": self.seed,
+            "objects": [obj.to_dict() for obj in self.objects],
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SceneSpec":
+        return cls(
+            prompt=str(data.get("prompt", "")),
+            seed=data.get("seed"),
+            objects=tuple(
+                SpawnedObject.from_dict(obj) for obj in data.get("objects", [])
+            ),
+            metadata=dict(data.get("metadata", {})),
+        )
+

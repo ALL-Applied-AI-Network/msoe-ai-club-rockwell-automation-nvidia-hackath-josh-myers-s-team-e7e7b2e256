@@ -20,7 +20,7 @@ def project_ground_truth(
     ground_truth_name: str = "ground_truth.json",
     scene_state_name: str = "scene_state.json",
 ) -> dict[str, Any]:
-    """Create normalized 2D cube boxes from the saved camera and scene poses."""
+    """Create normalized 2D object boxes from saved camera and scene poses."""
     image_path = run / image_name
     image = cv2.imread(str(image_path))
     if image is None:
@@ -67,52 +67,124 @@ def project_ground_truth(
 
     focal_x = focal_length * width / horizontal_aperture
     focal_y = focal_length * height / vertical_aperture
+
+    def project_points(points_world: list[tuple[float, float, float]]) -> np.ndarray:
+        points = []
+        for point in points_world:
+            camera_xyz = np.array([*point, 1.0]) @ world_to_camera
+            depth = -camera_xyz[2]
+            if not math.isfinite(depth) or depth <= 0:
+                raise ValueError("object is behind the camera")
+            points.append(
+                (
+                    width / 2 + focal_x * camera_xyz[0] / depth,
+                    height / 2 - focal_y * camera_xyz[1] / depth,
+                )
+            )
+        return np.asarray(points)
+
+    def cylinder_points(
+        center: np.ndarray,
+        radius: float,
+        axis: np.ndarray,
+        length: float,
+        *,
+        segments: int = 24,
+    ) -> list[tuple[float, float, float]]:
+        axis = axis / np.linalg.norm(axis)
+        helper = np.array([0.0, 0.0, 1.0])
+        if abs(float(np.dot(axis, helper))) > 0.95:
+            helper = np.array([1.0, 0.0, 0.0])
+        radial_x = np.cross(axis, helper)
+        radial_x /= np.linalg.norm(radial_x)
+        radial_y = np.cross(axis, radial_x)
+        points = []
+        for axial in (-length / 2, length / 2):
+            ring_center = center + axial * axis
+            for segment in range(segments):
+                angle = 2 * math.pi * segment / segments
+                point = (
+                    ring_center
+                    + radius * math.cos(angle) * radial_x
+                    + radius * math.sin(angle) * radial_y
+                )
+                points.append(tuple(float(value) for value in point))
+        return points
+
     boxes = []
     for obj in objects:
-        if not isinstance(obj, dict) or obj.get("category") != "cube":
+        if not isinstance(obj, dict):
+            continue
+        category = obj.get("category")
+        if category not in ("cube", "cap", "vial"):
             continue
         name = obj.get("name")
         colour = str(obj.get("colour", "")).lower()
         state = states.get(name)
         if not isinstance(name, str) or not isinstance(state, dict):
-            raise ValueError(f"{ground_truth_path} cube has no saved scene pose")
+            raise ValueError(f"{ground_truth_path} object has no saved scene pose")
         try:
             center = np.asarray(state["position"], dtype=np.float64)
-            edge = float(obj["size"])
-            yaw = math.radians(float(obj["yaw_deg"]))
+            size = float(obj["size"])
         except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"{ground_truth_path} cube {name!r} has invalid pose") from exc
+            raise ValueError(f"{ground_truth_path} object {name!r} has invalid pose") from exc
         if (
             center.shape != (3,)
             or not np.isfinite(center).all()
-            or not math.isfinite(edge)
-            or edge <= 0
-            or not math.isfinite(yaw)
-            or colour not in ("yellow", "blue", "red")
+            or not math.isfinite(size)
+            or size <= 0
         ):
-            raise ValueError(f"{ground_truth_path} cube {name!r} has invalid pose")
+            raise ValueError(f"{ground_truth_path} object {name!r} has invalid pose")
 
-        cosine, sine = math.cos(yaw), math.sin(yaw)
-        rotation = np.array([[cosine, -sine], [sine, cosine]])
-        projected = []
-        for x in (-edge / 2, edge / 2):
-            for y in (-edge / 2, edge / 2):
-                world_xy = center[:2] + rotation @ np.array([x, y])
-                for z in (-edge / 2, edge / 2):
-                    camera_xyz = np.array(
-                        [world_xy[0], world_xy[1], center[2] + z, 1.0]
-                    ) @ world_to_camera
-                    depth = -camera_xyz[2]
-                    if not math.isfinite(depth) or depth <= 0:
-                        raise ValueError(f"cube {name!r} is behind the camera")
-                    projected.append(
-                        (
-                            width / 2 + focal_x * camera_xyz[0] / depth,
-                            height / 2 - focal_y * camera_xyz[1] / depth,
+        if category == "cube":
+            if colour not in ("yellow", "blue", "red"):
+                raise ValueError(
+                    f"{ground_truth_path} cube {name!r} has unsupported colour {colour!r}"
+                )
+            try:
+                yaw = math.radians(float(obj["yaw_deg"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{ground_truth_path} cube {name!r} has invalid yaw"
+                ) from exc
+            cosine, sine = math.cos(yaw), math.sin(yaw)
+            rotation = np.array([[cosine, -sine], [sine, cosine]])
+            world_points = []
+            for x in (-size / 2, size / 2):
+                for y in (-size / 2, size / 2):
+                    world_xy = center[:2] + rotation @ np.array([x, y])
+                    for z in (-size / 2, size / 2):
+                        world_points.append(
+                            (float(world_xy[0]), float(world_xy[1]), float(center[2] + z))
                         )
-                    )
+        elif category == "cap":
+            object_height = float(obj.get("height", size))
+            if not math.isfinite(object_height) or object_height <= 0:
+                raise ValueError(
+                    f"{ground_truth_path} cap {name!r} has invalid height"
+                )
+            world_points = cylinder_points(
+                center, size / 2, np.array([0.0, 0.0, 1.0]), object_height
+            )
+        else:
+            try:
+                length = float(obj["length"])
+                yaw = math.radians(float(obj["yaw_deg"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{ground_truth_path} vial {name!r} needs length and yaw"
+                ) from exc
+            if not math.isfinite(length) or length <= 0:
+                raise ValueError(
+                    f"{ground_truth_path} vial {name!r} has invalid length"
+                )
+            axis = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+            world_points = cylinder_points(center, size / 2, axis, length)
 
-        points = np.asarray(projected)
+        try:
+            points = project_points(world_points)
+        except ValueError as exc:
+            raise ValueError(f"{name!r}: {exc}") from exc
         x_min = max(0.0, float(points[:, 0].min()))
         y_min = max(0.0, float(points[:, 1].min()))
         x_max = min(float(width), float(points[:, 0].max()))
@@ -122,9 +194,11 @@ def project_ground_truth(
         boxes.append(
             {
                 "name": name,
-                "label": f"{colour} cube",
-                "category": "cube",
-                "colour": colour,
+                "label": f"{colour} cube" if category == "cube" else str(category),
+                "category": category,
+                "class_name": f"{colour}_cube" if category == "cube" else category,
+                **({"colour": colour} if category == "cube" else {}),
+                **({"orientation": str(obj["orientation"])} if "orientation" in obj else {}),
                 "center": [
                     (x_min + x_max) / (2 * width),
                     (y_min + y_max) / (2 * height),
@@ -142,7 +216,7 @@ def project_ground_truth(
     return {
         "coordinate_convention": "unit",
         "model": "Isaac Sim ground truth projection",
-        "task": "cube_detection",
+        "task": "object_detection",
         "objects": boxes,
     }
 

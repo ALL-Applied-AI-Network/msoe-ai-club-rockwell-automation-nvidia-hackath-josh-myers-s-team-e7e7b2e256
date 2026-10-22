@@ -28,11 +28,49 @@ parser.add_argument(
 parser.add_argument(
     "--seed", type=int, default=42, help="seed for reproducible capture variations"
 )
+parser.add_argument(
+    "--lighting-scale-range",
+    type=float,
+    nargs=2,
+    default=(0.7, 1.3),
+    metavar=("MIN", "MAX"),
+    help="randomize studio-light intensity per view (multi-view captures only)",
+)
+parser.add_argument(
+    "--group-name",
+    help="save all multi-view samples under this domain/split group instead of train/val",
+)
+parser.add_argument(
+    "--scene-spec",
+    help="path to JSON scene spec or JSON string generated from text prompt",
+)
 args = parser.parse_args()
 if args.views < 1 or not 0 <= args.validation_views < args.views:
     parser.error("--views must be positive and --validation-views in [0, views)")
+if not 0 < args.lighting_scale_range[0] <= args.lighting_scale_range[1]:
+    parser.error("--lighting-scale-range requires 0 < MIN <= MAX")
+if args.group_name and (
+    args.validation_views > 0
+    or not all(character.isalnum() or character in "_-" for character in args.group_name)
+):
+    parser.error(
+        "--group-name must be a safe folder name and cannot be combined "
+        "with --validation-views"
+    )
 # resolve before Isaac starts: Kit changes the working directory
 args.out = os.path.abspath(args.out)
+
+loaded_scene_spec = None
+if args.scene_spec:
+    spec_path = os.path.abspath(args.scene_spec)
+    if os.path.isfile(spec_path):
+        with open(spec_path) as f:
+            loaded_scene_spec = json.load(f)
+    else:
+        try:
+            loaded_scene_spec = json.loads(args.scene_spec)
+        except Exception:
+            parser.error(f"Cannot load scene spec: {args.scene_spec}")
 
 from isaacsim import SimulationApp
 
@@ -49,7 +87,7 @@ import scene_config as C, cell
 
 world = World(stage_units_in_meters=1.0)
 stage = omni.usd.get_context().get_stage()
-cell.build(stage)
+cell.build(stage, scene_spec=loaded_scene_spec)
 # Keep the arrangement identical across capture and execution while shaders load.
 from pxr import UsdPhysics
 
@@ -115,9 +153,20 @@ camera_data = {
     "table_top_z": float(C.TABLE_TOP_Z + C.SURFACE_DZ),
     "robot_base_xy": [0.0, 0.0],
 }
+light_paths = (
+    "/World/DomeLight",
+    "/World/KeyLight",
+    "/World/FillLight",
+    "/World/RimLight",
+)
+base_light_intensities = {
+    path: float(stage.GetPrimAtPath(path).GetAttribute("inputs:intensity").Get())
+    for path in light_paths
+    if stage.GetPrimAtPath(path).IsValid()
+}
 
 
-def save_view(out_dir):
+def save_view(out_dir, lighting_scale):
     os.makedirs(out_dir, exist_ok=True)
     rgba = cam.get_rgba()
     if rgba is None:
@@ -126,8 +175,15 @@ def save_view(out_dir):
     img_path = os.path.join(out_dir, "world_camera.png")
     if not cv2.imwrite(img_path, cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
         raise OSError(f"Could not write camera image: {img_path}")
+    view_camera_data = {
+        **camera_data,
+        "capture_domain": {
+            "camera": args.camera,
+            "lighting_scale": lighting_scale,
+        },
+    }
     with open(os.path.join(out_dir, "camera.json"), "w") as f:
-        json.dump(camera_data, f, indent=2)
+        json.dump(view_camera_data, f, indent=2)
 
     gt = {"objects": [], "bins": {}}
     scene_state = {"objects": {}}
@@ -141,40 +197,97 @@ def save_view(out_dir):
                 "orientation": quat.tolist(),
             }
 
-    for i, (x, y, colour) in enumerate(C.SORT_CUBES):
-        gt["objects"].append(
-            {
-                "name": f"SortCube{i}",
-                "category": "cube",
-                "colour": colour,
-                "xyz": [x, y, C.CUBE_EDGE / 2],
-                "size": C.CUBE_EDGE,
-                "yaw_deg": C.SORT_CUBE_YAWS_DEG[i],
-            }
+    if loaded_scene_spec is not None:
+        spec_objs = (
+            loaded_scene_spec.get("objects", [])
+            if isinstance(loaded_scene_spec, dict)
+            else [o.to_dict() for o in loaded_scene_spec.objects]
         )
-    for i, (x, y) in enumerate(C.SORT_CAPS):
-        gt["objects"].append(
-            {
-                "name": f"SortCap{i}",
-                "category": "cap",
-                "colour": "yellow",
-                "xyz": [x, y, C.CAP_HEIGHT / 2],
-                "orientation": C.CAP_ORIENTATIONS[i],
-                "size": C.CAP_RADIUS * 2,
-            }
-        )
-    for i, (x, y_ctr, yaw) in enumerate(C.SORT_VIALS):
-        gt["objects"].append(
-            {
-                "name": f"SortVial{i}",
-                "category": "vial",
-                "colour": "clear",
-                "xyz": [x, y_ctr, C.VIAL_RADIUS],
-                "size": C.VIAL_RADIUS * 2,
-                "length": C.VIAL_LENGTH,
-                "yaw_deg": yaw,
-            }
-        )
+        cube_idx = 0
+        cap_idx = 0
+        vial_idx = 0
+        for obj in spec_objs:
+            cat = obj.get("category")
+            pos = obj.get("position", [0.0, 0.0, 0.0])
+            yaw = float(obj.get("yaw_deg", 0.0))
+            if cat == "cube":
+                col = (
+                    obj.get("color")
+                    or obj.get("class_name", "yellow_cube").removesuffix("_cube")
+                )
+                gt["objects"].append(
+                    {
+                        "name": f"SortCube{cube_idx}",
+                        "category": "cube",
+                        "colour": col,
+                        "xyz": [pos[0], pos[1], C.CUBE_EDGE / 2],
+                        "size": C.CUBE_EDGE,
+                        "yaw_deg": yaw,
+                    }
+                )
+                cube_idx += 1
+            elif cat == "cap":
+                gt["objects"].append(
+                    {
+                        "name": f"SortCap{cap_idx}",
+                        "category": "cap",
+                        "colour": "yellow",
+                        "xyz": [pos[0], pos[1], C.CAP_HEIGHT / 2],
+                        "orientation": obj.get("orientation", "narrow_end_up"),
+                        "size": C.CAP_RADIUS * 2,
+                        "height": C.CAP_HEIGHT,
+                    }
+                )
+                cap_idx += 1
+            elif cat == "vial":
+                gt["objects"].append(
+                    {
+                        "name": f"SortVial{vial_idx}",
+                        "category": "vial",
+                        "colour": "clear",
+                        "xyz": [pos[0], pos[1], C.VIAL_RADIUS],
+                        "size": C.VIAL_RADIUS * 2,
+                        "length": C.VIAL_LENGTH,
+                        "yaw_deg": yaw,
+                    }
+                )
+                vial_idx += 1
+    else:
+        for i, (x, y, colour) in enumerate(C.SORT_CUBES):
+            gt["objects"].append(
+                {
+                    "name": f"SortCube{i}",
+                    "category": "cube",
+                    "colour": colour,
+                    "xyz": [x, y, C.CUBE_EDGE / 2],
+                    "size": C.CUBE_EDGE,
+                    "yaw_deg": C.SORT_CUBE_YAWS_DEG[i],
+                }
+            )
+        for i, (x, y) in enumerate(C.SORT_CAPS):
+            gt["objects"].append(
+                {
+                    "name": f"SortCap{i}",
+                    "category": "cap",
+                    "colour": "yellow",
+                    "xyz": [x, y, C.CAP_HEIGHT / 2],
+                    "orientation": C.CAP_ORIENTATIONS[i],
+                    "size": C.CAP_RADIUS * 2,
+                    "height": C.CAP_HEIGHT,
+                }
+            )
+        for i, (x, y_ctr, yaw) in enumerate(C.SORT_VIALS):
+            gt["objects"].append(
+                {
+                    "name": f"SortVial{i}",
+                    "category": "vial",
+                    "colour": "clear",
+                    "xyz": [x, y_ctr, C.VIAL_RADIUS],
+                    "size": C.VIAL_RADIUS * 2,
+                    "length": C.VIAL_LENGTH,
+                    "yaw_deg": yaw,
+                }
+            )
 
     with open(os.path.join(out_dir, "ground_truth.json"), "w") as f:
         json.dump(gt, f, indent=2)
@@ -185,7 +298,7 @@ def save_view(out_dir):
 
 
 if args.views == 1:
-    save_view(args.out)
+    save_view(args.out, 1.0)
 else:
     if os.path.exists(args.out) and os.listdir(args.out):
         raise FileExistsError(f"Capture output directory is not empty: {args.out}")
@@ -194,34 +307,45 @@ else:
     initial_yaws = tuple(C.SORT_CUBE_YAWS_DEG)
     for view_index in range(args.views):
         view_seed = args.seed + view_index
-        C.SORT_CUBES, C.SORT_CUBE_YAWS_DEG = C.sample_capture_view(view_seed)
-        for cube_index, (x, y, _) in enumerate(C.SORT_CUBES):
-            angle = np.deg2rad(C.SORT_CUBE_YAWS_DEG[cube_index])
-            orientation = np.array(
-                [np.cos(angle / 2), 0.0, 0.0, np.sin(angle / 2)]
+        lighting_scale = C.sample_capture_lighting_scale(
+            view_seed, *args.lighting_scale_range
+        )
+        for path, intensity in base_light_intensities.items():
+            stage.GetPrimAtPath(path).GetAttribute("inputs:intensity").Set(
+                intensity * lighting_scale
             )
-            SingleXFormPrim(f"/World/SortCube{cube_index}").set_world_pose(
-                np.array(
-                    [
-                        x,
-                        y,
-                        C.TABLE_TOP_Z + C.SURFACE_DZ + C.CUBE_EDGE / 2,
-                    ]
-                ),
-                orientation,
-            )
+        if loaded_scene_spec is None:
+            C.SORT_CUBES, C.SORT_CUBE_YAWS_DEG = C.sample_capture_view(view_seed)
+            for cube_index, (x, y, _) in enumerate(C.SORT_CUBES):
+                angle = np.deg2rad(C.SORT_CUBE_YAWS_DEG[cube_index])
+                orientation = np.array(
+                    [np.cos(angle / 2), 0.0, 0.0, np.sin(angle / 2)]
+                )
+                SingleXFormPrim(f"/World/SortCube{cube_index}").set_world_pose(
+                    np.array(
+                        [
+                            x,
+                            y,
+                            C.TABLE_TOP_Z + C.SURFACE_DZ + C.CUBE_EDGE / 2,
+                        ]
+                    ),
+                    orientation,
+                )
         for _ in range(20):
             world.step(render=True)
-        split = (
-            "val" if view_index >= args.views - args.validation_views else "train"
-        )
-        split_index = (
-            view_index - (args.views - args.validation_views)
-            if split == "val"
-            else view_index
-        )
+        if args.group_name:
+            split, split_index = args.group_name, view_index
+        else:
+            split = (
+                "val" if view_index >= args.views - args.validation_views else "train"
+            )
+            split_index = (
+                view_index - (args.views - args.validation_views)
+                if split == "val"
+                else view_index
+            )
         view_dir = os.path.join(args.out, split, f"view_{split_index + 1:04d}")
-        save_view(view_dir)
+        save_view(view_dir, lighting_scale)
     C.SORT_CUBES = list(initial_cubes)
     C.SORT_CUBE_YAWS_DEG = list(initial_yaws)
 sim_app.close()

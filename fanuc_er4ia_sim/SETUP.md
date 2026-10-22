@@ -91,14 +91,14 @@ Check dependencies and model loading before a complete run:
 CUDA must be available. The second command also checks framework imports and
 weights, and exits after loading to release GPU memory.
 
-## 4. SAM 3.1 cube labels
+## 4. SAM 3.1 instance masks
 
 SAM 3.1 is an optional alternate teacher for the YOLO dataset workflow. It
-segments instances from text prompts ("yellow cube", "blue cube", and "red
-cube") and turns each mask into a normalized bounding box. Its outputs are
-pseudo-labels, not ground truth: inspect each generated `sam3_preview.png`
-before exporting labels. This does not change the Cosmos runtime used by the
-robot sorting pipeline.
+segments instances from text prompts and writes both normalized bounding boxes
+and reusable per-instance binary masks. Its outputs are pseudo-labels, not
+ground truth: inspect each generated `sam3_preview.png` before exporting
+labels. This does not change the Cosmos runtime used by the robot sorting
+pipeline.
 
 SAM 3.1 requires the official Meta SAM 3 code, Python 3.12+, PyTorch 2.7+ and a
 CUDA 12.6+ compatible GPU. The official setup currently recommends PyTorch
@@ -133,13 +133,17 @@ uv pip install --python "$SAM3_PYTHON" huggingface_hub
 Do not put an access token in the repository.
 
 Run SAM once over all captured views; it loads the model once and writes
-`sam3_detections.json` plus a colored-mask review image for each view:
+`sam3_detections.json`, a colored review image, and binary PNG masks for each
+detected instance. The five-class Problem 3 configuration is:
 
 ```bash
 srun --partition=dgx --gpus=1 --ntasks=1 --cpus-per-task=8 \
   --mem=64G --time=02:00:00 \
   "$SAM3_PYTHON" ../scripts/label_with_sam3.py \
   --checkpoint ../models/SAM3-1/sam3.1_multiplex.pt \
+  --class-names yellow_cube blue_cube red_cube cap vial \
+  --class-prompt 'cap=plastic cap' \
+  --class-prompt 'vial=clear plastic vial' \
   --runs ../output/runs/cube_views_gt_20261020_1435/train/view_* \
          ../output/runs/cube_views_gt_20261020_1435/val/view_* \
   --device cuda \
@@ -148,7 +152,9 @@ srun --partition=dgx --gpus=1 --ntasks=1 --cpus-per-task=8 \
 
 The loader currently reports four missing `convs.3` neck parameters for this
 checkpoint. Treat SAM results as pseudo-labels and compare them with the
-simulator annotations before using them for training.
+simulator annotations before using them for training. SAM's open-vocabulary
+text prompts can struggle with transparent vials; prefer projected simulator
+labels for those captures when their calibration and poses are valid.
 
 After reviewing the per-view previews, feed the labels to the existing exporter:
 
@@ -157,13 +163,16 @@ uv run python ../scripts/build_yolo_dataset.py \
   --runs ../output/runs/cube_views_gt_20261020_1435/train/view_* \
          ../output/runs/cube_views_gt_20261020_1435/val/view_* \
   --detections-name sam3_detections.json \
+  --class-names yellow_cube blue_cube red_cube cap vial \
   --output ../artifacts/cube_yolo_sam3 \
   --validation-group val
 ```
 
 SAM output files are separate from Cosmos `detections.json` and simulator
 ground-truth labels. The script refuses to overwrite existing outputs unless
-`--overwrite` is passed.
+`--overwrite` is passed. The JSON's `mask_path` refers to each binary mask;
+the dataset exporter copies referenced masks into its own `masks/` directory
+and writes `mask_index.json`.
 
 ## 5. Run and verify
 
@@ -202,11 +211,10 @@ one, capture multiple cube layouts into one directory:
 
   This writes 24 training candidates under `train/` and six held-out views under
   `val/`. Each view includes `world_camera.png`, `camera.json`, and
-  `ground_truth.json`; the seed changes the four additional cube positions and
-  all six cube rotations while keeping cubes spaced from one another and the
-  fixed props. Use the same seed and view count to reproduce the set. The arm
-  and camera stay fixed; these captures vary object arrangement and orientation,
-  not lighting or camera angle.
+  `ground_truth.json`; the seed changes cube placement/orientation and studio
+  light intensity while keeping objects spaced from one another and fixed
+  props. `camera.json` records the per-view lighting scale. Use `--camera side`
+  or `--camera wrist` in a separate run to add another viewpoint.
 
   For Cosmos pseudo-labels, run perception on each view directory; it writes the
   `detections.json` expected by the YOLO dataset exporter:

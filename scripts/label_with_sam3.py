@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
@@ -13,11 +14,57 @@ import numpy as np
 from PIL import Image
 
 
-CLASS_PROMPTS = (
-    ("yellow", "yellow cube", (0, 220, 255)),
-    ("blue", "blue cube", (255, 120, 0)),
-    ("red", "red cube", (40, 40, 240)),
-)
+CLASS_NAMES = ("yellow_cube", "blue_cube", "red_cube")
+PREVIEW_COLORS = {
+    "yellow_cube": (0, 220, 255),
+    "blue_cube": (255, 120, 0),
+    "red_cube": (40, 40, 240),
+    "cap": (255, 0, 255),
+    "vial": (0, 255, 0),
+}
+
+
+@dataclass(frozen=True)
+class ClassPrompt:
+    class_name: str
+    prompt: str
+    category: str
+    colour: str | None
+    preview_colour: tuple[int, int, int]
+
+
+def _class_prompts(
+    class_names: tuple[str, ...],
+    overrides: dict[str, str] | None = None,
+) -> tuple[ClassPrompt, ...]:
+    overrides = overrides or {}
+    prompts = []
+    for index, class_name in enumerate(class_names):
+        colour = class_name.removesuffix("_cube")
+        is_cube_colour = class_name.endswith("_cube") and colour in {
+            "yellow",
+            "blue",
+            "red",
+        }
+        prompt = (
+            f"{colour} cube"
+            if is_cube_colour
+            else class_name.replace("_", " ")
+        )
+        preview_colour = PREVIEW_COLORS.get(
+            class_name,
+            ((index * 67 + 30) % 256, (index * 131 + 90) % 256, (index * 197 + 150) % 256),
+        )
+        prompts.append(
+            ClassPrompt(
+                class_name=class_name,
+                prompt=overrides.get(class_name, prompt),
+                category="cube" if is_cube_colour else class_name,
+                colour=colour if is_cube_colour else None,
+                preview_colour=preview_colour,
+            )
+        )
+    return tuple(prompts)
 
 
 def _as_numpy(value: Any) -> np.ndarray:
@@ -30,10 +77,12 @@ def detections_from_masks(
     masks: Any,
     scores: Any,
     *,
-    colour: str,
+    colour: str | None = None,
     width: int,
     height: int,
     threshold: float,
+    class_name: str | None = None,
+    category: str = "cube",
 ) -> list[dict[str, Any]]:
     """Convert SAM instance masks to the normalized boxes used by the exporter."""
     mask_array = _as_numpy(masks)
@@ -70,14 +119,23 @@ def detections_from_masks(
         )
         detections.append(
             {
-                "label": f"{colour} cube",
-                "category": "cube",
-                "colour": colour,
+                "label": (
+                    f"{colour} cube"
+                    if category == "cube" and colour
+                    else (class_name or category).replace("_", " ")
+                ),
+                "class_name": (
+                    class_name or f"{colour}_cube"
+                    if colour
+                    else class_name or category
+                ),
+                "category": category,
                 "center": [(x1 + x2) / 2, (y1 + y2) / 2],
                 "bbox": [x1, y1, x2, y2],
                 "score": confidence,
                 "mask_area_px": int(np.count_nonzero(mask)),
                 "_mask_index": mask_index,
+                **({"colour": colour} if colour else {}),
             }
         )
     return detections
@@ -88,11 +146,17 @@ def _draw_preview(
     masks: list[np.ndarray],
     detections: list[dict[str, Any]],
     output_path: Path,
+    class_prompts: tuple[ClassPrompt, ...] | None = None,
 ) -> None:
     overlay = image.copy()
+    colours = {
+        prompt.class_name: prompt.preview_colour
+        for prompt in (class_prompts or _class_prompts(CLASS_NAMES))
+    }
     for mask, detection in zip(masks, detections):
-        colour = next(
-            color for name, _, color in CLASS_PROMPTS if name == detection["colour"]
+        colour = colours.get(
+            detection["class_name"],
+            (0, 220, 0),
         )
         binary_mask = mask.astype(bool)
         tint = np.zeros_like(overlay)
@@ -191,13 +255,18 @@ def label_run(
     threshold: float,
     overwrite: bool,
     amp_dtype: Any = None,
+    class_names: tuple[str, ...] = CLASS_NAMES,
+    prompt_overrides: dict[str, str] | None = None,
 ) -> int:
     image_path = run / image_name
     output_path = run / output_name
     preview_path = run / preview_name
+    mask_directory = run / "sam3_masks"
     if not image_path.is_file():
         raise FileNotFoundError(f"Image not found: {image_path}")
-    if not overwrite and (output_path.exists() or preview_path.exists()):
+    if not overwrite and (
+        output_path.exists() or preview_path.exists() or mask_directory.exists()
+    ):
         raise FileExistsError(
             f"Refusing to overwrite SAM output in {run}; choose a different "
             "filename or pass --overwrite."
@@ -210,6 +279,7 @@ def label_run(
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     objects = []
     preview_masks = []
+    class_prompts = _class_prompts(class_names, prompt_overrides)
     if amp_dtype is None:
         amp_context = nullcontext()
     else:
@@ -218,15 +288,19 @@ def label_run(
         amp_context = torch.autocast(device_type="cuda", dtype=amp_dtype)
     with amp_context:
         state = processor.set_image(Image.fromarray(image_rgb))
-        for colour, prompt, _ in CLASS_PROMPTS:
-            result = _set_text_prompt(processor, prompt, state, amp_dtype)
+        for class_prompt in class_prompts:
+            result = _set_text_prompt(
+                processor, class_prompt.prompt, state, amp_dtype
+            )
             records = detections_from_masks(
                 result["masks"],
                 result["scores"],
-                colour=colour,
                 width=width,
                 height=height,
                 threshold=threshold,
+                class_name=class_prompt.class_name,
+                category=class_prompt.category,
+                colour=class_prompt.colour,
             )
             masks = _as_numpy(result["masks"])
             if masks.ndim == 4 and masks.shape[1] == 1:
@@ -235,17 +309,30 @@ def label_run(
                 preview_masks.append(masks[detection.pop("_mask_index")])
                 objects.append(detection)
 
+    mask_directory.mkdir(parents=True, exist_ok=True)
+    for index, (mask, detection) in enumerate(zip(preview_masks, objects)):
+        mask_name = f"mask_{index:05d}.png"
+        mask_path = mask_directory / mask_name
+        binary_mask = (mask > 0).astype(np.uint8) * 255
+        if not cv2.imwrite(str(mask_path), binary_mask):
+            raise OSError(f"Could not write SAM mask: {mask_path}")
+        detection["mask_path"] = f"sam3_masks/{mask_name}"
+
     payload = {
         "model": "facebook/sam3.1",
-        "task": "cube_detection",
+        "task": "text_prompted_instance_segmentation",
         "coordinate_convention": "unit",
         "label_status": "sam3_pseudo_labels_require_human_review",
         "score_threshold": threshold,
-        "prompts": {colour: prompt for colour, prompt, _ in CLASS_PROMPTS},
+        "prompts": {
+            spec.class_name: spec.prompt for spec in class_prompts
+        },
         "objects": objects,
     }
     output_path.write_text(json.dumps(payload, indent=2) + "\n")
-    _draw_preview(image_bgr, preview_masks, objects, preview_path)
+    _draw_preview(
+        image_bgr, preview_masks, objects, preview_path, class_prompts
+    )
     print(f"{run}: wrote {len(objects)} SAM detections to {output_path}")
     print(f"{run}: preview saved to {preview_path}")
     return len(objects)
@@ -271,10 +358,23 @@ def main() -> None:
     parser.add_argument("--preview-name", default="sam3_preview.png")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument(
+        "--class-names",
+        nargs="+",
+        default=list(CLASS_NAMES),
+        help="classes to prompt for (defaults to yellow_cube blue_cube red_cube)",
+    )
+    parser.add_argument(
+        "--class-prompt",
+        action="append",
+        default=[],
+        metavar="CLASS=TEXT",
+        help="override a prompt for one class; repeat as needed",
+    )
+    parser.add_argument(
         "--device",
-        choices=("auto", "cuda", "cpu"),
-        default="auto",
-        help="inference device; SAM 3.1 is intended for a CUDA GPU",
+        choices=("cuda",),
+        default="cuda",
+        help="inference device; the official SAM 3.1 image processor requires CUDA",
     )
     parser.add_argument(
         "--overwrite",
@@ -293,6 +393,18 @@ def main() -> None:
         parser.error("--output-name and --preview-name must be different")
     if not args.checkpoint.is_file():
         parser.error(f"SAM 3.1 checkpoint not found: {args.checkpoint}")
+    if len(set(args.class_names)) != len(args.class_names) or not args.class_names:
+        parser.error("--class-names must be non-empty and unique")
+    prompt_overrides = {}
+    for entry in args.class_prompt:
+        class_name, separator, prompt = entry.partition("=")
+        if not separator or not class_name or not prompt:
+            parser.error("--class-prompt must use CLASS=TEXT")
+        if class_name not in args.class_names:
+            parser.error(f"prompt override class {class_name!r} is not in --class-names")
+        if class_name in prompt_overrides:
+            parser.error(f"duplicate prompt override for class {class_name!r}")
+        prompt_overrides[class_name] = prompt
     if not args.runs:
         parser.error("provide at least one run directory")
 
@@ -305,7 +417,9 @@ def main() -> None:
         if not (run / args.image_name).is_file():
             parser.error(f"Image not found: {run / args.image_name}")
         if not args.overwrite and (
-            (run / args.output_name).exists() or (run / args.preview_name).exists()
+            (run / args.output_name).exists()
+            or (run / args.preview_name).exists()
+            or (run / "sam3_masks").exists()
         ):
             parser.error(
                 f"SAM output already exists in {run}; use different filenames "
@@ -318,9 +432,7 @@ def main() -> None:
         parser.error(f"PyTorch is not installed in this environment: {exc}")
 
     device = args.device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda" and not torch.cuda.is_available():
+    if not torch.cuda.is_available():
         parser.error("--device cuda was selected, but CUDA is unavailable")
     amp_dtype = None
     if device == "cuda":
@@ -339,6 +451,8 @@ def main() -> None:
             threshold=args.threshold,
             overwrite=args.overwrite,
             amp_dtype=amp_dtype,
+            class_names=tuple(args.class_names),
+            prompt_overrides=prompt_overrides,
         )
     print(f"Wrote {total} SAM pseudo-labels across {len(runs)} image(s).")
 

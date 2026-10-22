@@ -575,7 +575,7 @@ def scale_cad_visual(stage, path, scale):
     )
 
 
-def build(stage, with_objects=True):
+def build(stage, with_objects=True, scene_spec=None):
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     UsdGeom.Xform.Define(stage, "/World")
@@ -651,7 +651,7 @@ def build(stage, with_objects=True):
     if with_objects:
         if C.SHOW_FIXTURE:
             add_props(stage)
-        add_sort_objects(stage)
+        add_sort_objects(stage, scene_spec=scene_spec)
         if C.SHOW_BINS:
             add_sort_bins(stage)
 
@@ -853,10 +853,57 @@ def add_bin(stage):
 USD_INCH_SCALE = 0.0254  # USD assets use inches; scale to metres
 
 
-def add_sort_objects(stage):
+def add_sort_objects(stage, scene_spec=None):
     """Load the USD visual assets and add invisible physics colliders."""
     here = os.path.dirname(os.path.abspath(__file__))
     Z = C.TABLE_TOP_Z + C.SURFACE_DZ
+
+    if scene_spec is None:
+        env_spec = os.environ.get("FANUC_SCENE_SPEC")
+        if env_spec:
+            if os.path.isfile(env_spec):
+                with open(env_spec) as f:
+                    scene_spec = json.load(f)
+            else:
+                try:
+                    scene_spec = json.loads(env_spec)
+                except Exception:
+                    scene_spec = None
+
+    if scene_spec is not None:
+        spec_objs = (
+            scene_spec.get("objects", [])
+            if isinstance(scene_spec, dict)
+            else [o.to_dict() for o in scene_spec.objects]
+        )
+        vials_to_add = []
+        caps_to_add = []
+        cubes_to_add = []
+        for obj in spec_objs:
+            cat = obj.get("category")
+            pos = obj.get("position", [0.0, 0.0, 0.0])
+            yaw = float(obj.get("yaw_deg", 0.0))
+            if cat == "vial":
+                vials_to_add.append((pos[0], pos[1], yaw))
+            elif cat == "cap":
+                caps_to_add.append(
+                    (pos[0], pos[1], obj.get("orientation", "narrow_end_up"))
+                )
+            elif cat == "cube":
+                col = (
+                    obj.get("color")
+                    or obj.get("class_name", "yellow_cube").removesuffix("_cube")
+                )
+                cubes_to_add.append((pos[0], pos[1], col, yaw))
+    else:
+        vials_to_add = C.SORT_VIALS
+        caps_to_add = [
+            (x, y, C.CAP_ORIENTATIONS[i]) for i, (x, y) in enumerate(C.SORT_CAPS)
+        ]
+        cubes_to_add = [
+            (x, y, col, C.SORT_CUBE_YAWS_DEG[i])
+            for i, (x, y, col) in enumerate(C.SORT_CUBES)
+        ]
 
     # ---- vials: long-axis in XY plane, centred at (x_ctr, y) ----
     # Each entry: (x_ctr, y[, yaw_deg]).  yaw_deg rotates the vial from +X
@@ -865,7 +912,7 @@ def add_sort_objects(stage):
     #   T = (x_ctr - L/2·cos(yaw), y - L/2·sin(yaw), Z + r)
     import math as _math
 
-    for i, entry in enumerate(C.SORT_VIALS):
+    for i, entry in enumerate(vials_to_add):
         x_ctr, y = entry[0], entry[1]
         yaw_deg = entry[2] if len(entry) > 2 else 0.0
         yaw_rad = _math.radians(yaw_deg)
@@ -914,10 +961,10 @@ def add_sort_objects(stage):
         make_dynamic(g.GetPrim(), C.VIAL_MASS, collide_self=False)
 
     # ---- caps: lying flat (Z-up disc), origin = bottom face ----
-    for i, (x, y) in enumerate(C.SORT_CAPS):
+    for i, (x, y, orientation) in enumerate(caps_to_add):
         g = UsdGeom.Xform.Define(stage, f"/World/SortCap{i}")
         xf = UsdGeom.Xformable(g.GetPrim())
-        narrow_up = C.CAP_ORIENTATIONS[i] == "narrow_end_up"
+        narrow_up = orientation == "narrow_end_up"
         # Orient only the visual; root and compound collider remain Z-up.
         xf.AddTranslateOp().Set(Gf.Vec3d(x, y, Z))
 
@@ -1008,10 +1055,10 @@ def add_sort_objects(stage):
         make_dynamic(g.GetPrim(), C.CAP_MASS, collide_self=False)
 
     # ---- cubes: upright, colour variant from USD ----
-    for i, (x, y, colour) in enumerate(C.SORT_CUBES):
+    for i, (x, y, colour, yaw_deg) in enumerate(cubes_to_add):
         g = UsdGeom.Xform.Define(stage, f"/World/SortCube{i}")
         UsdGeom.Xformable(g.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(x, y, Z))
-        UsdGeom.Xformable(g.GetPrim()).AddRotateZOp().Set(C.SORT_CUBE_YAWS_DEG[i])
+        UsdGeom.Xformable(g.GetPrim()).AddRotateZOp().Set(yaw_deg)
 
         vis_path = f"/World/SortCube{i}/Visual"
         add_reference_to_stage(

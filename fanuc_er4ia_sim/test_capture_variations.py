@@ -35,6 +35,15 @@ class CaptureVariationTests(unittest.TestCase):
                     math.dist((x, y), (obstacle_x, obstacle_y)), 0.065
                 )
 
+    def test_lighting_scale_is_seeded_and_bounded(self):
+        first = C.sample_capture_lighting_scale(42)
+        second = C.sample_capture_lighting_scale(42)
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first, 0.7)
+        self.assertLessEqual(first, 1.3)
+        with self.assertRaises(ValueError):
+            C.sample_capture_lighting_scale(42, 0.0, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

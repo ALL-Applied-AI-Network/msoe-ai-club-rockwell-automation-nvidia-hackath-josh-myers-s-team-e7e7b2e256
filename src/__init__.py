@@ -18,6 +18,7 @@ from .core.models import (
     ModelArtifact,
     OverheadCameraFrame,
     Pose,
+    SideCameraFrame,
     TrialResult,
 )
 from .core.RealityController import RealityController
@@ -46,6 +47,7 @@ __all__ = [
     "RobotController",
     "RunReport",
     "SAMDataLabeler",
+    "SideCameraFrame",
     "TrialResult",
     "YOLOModel",
     "build_orchestrator",

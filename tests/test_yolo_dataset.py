@@ -146,6 +146,38 @@ class BuildYoloDatasetTests(unittest.TestCase):
 
             self.assertEqual(manifest["label_status"], "simulator_ground_truth")
 
+    def test_exports_configured_cap_and_vial_classes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            train_group = root / "train"
+            val_group = root / "val"
+            train_group.mkdir()
+            val_group.mkdir()
+            cap = self._make_run(
+                train_group,
+                "cap",
+                [{"category": "cap", "class_name": "cap", "bbox": [0.1, 0.1, 0.2, 0.2]}],
+            )
+            vial = self._make_run(
+                val_group,
+                "vial",
+                [{"category": "vial", "class_name": "vial", "bbox": [0.3, 0.2, 0.6, 0.8]}],
+            )
+
+            manifest = build_dataset(
+                [cap, vial],
+                root / "dataset",
+                validation_group="val",
+                class_names=("cap", "vial"),
+            )
+
+            self.assertEqual(manifest["class_names"], ["cap", "vial"])
+            self.assertEqual(manifest["boxes_by_class"]["train"]["cap"], 1)
+            self.assertEqual(manifest["boxes_by_class"]["val"]["vial"], 1)
+            data_yaml = (root / "dataset" / "data.yaml").read_text()
+            self.assertIn("cap", data_yaml)
+            self.assertIn("vial", data_yaml)
+
 
 if __name__ == "__main__":
     unittest.main()

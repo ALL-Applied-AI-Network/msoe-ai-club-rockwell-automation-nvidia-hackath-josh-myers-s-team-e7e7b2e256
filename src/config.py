@@ -13,9 +13,26 @@ class CameraDefinition:
 
 
 def load_problem3_config(path: Path) -> dict[str, Any]:
-    """Load the complete YAML config and validate the camera section exists."""
-    with path.open(encoding="utf-8") as config_file:
-        config = yaml.safe_load(config_file) or {}
+    """Load base and task YAML settings, then validate the camera definitions."""
+    path = path.resolve()
+
+    def load(path: Path, visited: set[Path]) -> dict[str, Any]:
+        if path in visited:
+            raise ValueError(f"Config inheritance cycle detected at {path}")
+        with path.open(encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file) or {}
+        if not isinstance(config, dict):
+            raise TypeError(f"Config root must be a mapping: {path}")
+        base_config = config.pop("base_config", None)
+        if base_config is None:
+            return config
+        if not isinstance(base_config, str) or not base_config:
+            raise TypeError(f"base_config must be a non-empty path in {path}")
+        base_path = (path.parent / base_config).resolve()
+        base = load(base_path, visited | {path})
+        return _merge_config(base, config)
+
+    config = load(path, set())
     try:
         views = config["components"]["cameras"]["views"]
     except (KeyError, TypeError) as exc:
@@ -23,6 +40,16 @@ def load_problem3_config(path: Path) -> dict[str, Any]:
     if not isinstance(views, list):
         raise TypeError("components.cameras.views must be a list")
     return config
+
+
+def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def camera_definitions(config: dict[str, Any]) -> tuple[CameraDefinition, ...]:

@@ -334,6 +334,15 @@ def sample_capture_view(seed):
     return cubes, yaws
 
 
+def sample_capture_lighting_scale(seed, minimum=0.7, maximum=1.3):
+    """Sample reproducible studio-light intensity variation for dataset renders."""
+    import random
+
+    if not 0 < minimum <= maximum:
+        raise ValueError("lighting scale bounds must satisfy 0 < minimum <= maximum")
+    return random.Random(seed ^ 0x5A17).uniform(minimum, maximum)
+
+
 SORT_CUBES = hackathon_cubes(CUBE_LAYOUT_SEED)
 # Tip enters above the flange. The straight retaining lip grips the plug.
 CAP_PICK_CLEARANCE = 0.001

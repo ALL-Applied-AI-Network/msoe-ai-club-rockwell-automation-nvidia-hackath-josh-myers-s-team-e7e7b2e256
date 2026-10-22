@@ -5,6 +5,8 @@ data:
   directory: data/problem3
   use_synthetic_data: false
   synthetic_source: null
+  annotation_source: simulator_ground_truth
+  validation_group: val
 task: vision_guided_robotic_grasping_and_sorting
 
 components:
@@ -12,12 +14,12 @@ components:
     count: 3
     synchronized: true
     views:
-      - id: overhead_left
+      - id: table
         role: workspace_observation
         placement: overhead
-      - id: overhead_right
+      - id: side
         role: workspace_observation
-        placement: overhead
+        placement: side
       - id: wrist
         role: grasp_confirmation_and_close_view
         placement: robot_wrist
@@ -57,5 +59,12 @@ model:
   architecture: vision_guided_grasp_planner
   annotation_format: detections_and_grasp_poses
   class_names:
+    - yellow_cube
+    - blue_cube
+    - red_cube
     - cap
     - vial
+  pretrained_weights: yolo26n.pt
+  epochs: 100
+  batch_size: 4
+  image_size: 1280

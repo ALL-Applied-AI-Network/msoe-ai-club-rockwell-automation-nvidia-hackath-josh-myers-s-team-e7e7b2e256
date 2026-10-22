@@ -104,6 +104,13 @@ class Sam3LabelingTests(unittest.TestCase):
             self.assertEqual(count, 3)
             self.assertEqual(len(detections["objects"]), 3)
             self.assertTrue((run / "sam3_preview.png").is_file())
+            self.assertTrue(all("mask_path" in obj for obj in detections["objects"]))
+            for obj in detections["objects"]:
+                mask = cv2.imread(
+                    str(run / obj["mask_path"]), cv2.IMREAD_GRAYSCALE
+                )
+                self.assertIsNotNone(mask)
+                self.assertIn(255, np.unique(mask))
 
             manifest = build_dataset(
                 [run],
@@ -114,6 +121,69 @@ class Sam3LabelingTests(unittest.TestCase):
             self.assertEqual(
                 manifest["boxes_by_class"]["train"],
                 {"yellow_cube": 1, "blue_cube": 1, "red_cube": 1},
+            )
+            self.assertEqual(manifest["instance_masks"], 3)
+            self.assertEqual(len(list((root / "dataset" / "masks").glob("train/*.png"))), 3)
+
+    def test_supports_non_cube_class_prompts_and_exports_bbox(self):
+        class FakeProcessor:
+            def set_image(self, image):
+                self.width, self.height = image.size
+                return {}
+
+            def set_text_prompt(self, *, prompt, state):
+                self.prompt = prompt
+                mask = np.zeros((1, self.height, self.width), dtype=np.uint8)
+                mask[0, 2:6, 3:8] = 1
+                return {"masks": mask, "scores": np.array([0.9])}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run = root / "train" / "view_0001"
+            run.mkdir(parents=True)
+            self.assertTrue(
+                cv2.imwrite(
+                    str(run / "world_camera.png"),
+                    np.zeros((10, 12, 3), dtype=np.uint8),
+                )
+            )
+
+            label_run(
+                run,
+                FakeProcessor(),
+                image_name="world_camera.png",
+                output_name="sam3_detections.json",
+                preview_name="sam3_preview.png",
+                threshold=0.5,
+                overwrite=False,
+                class_names=("cap", "vial"),
+                prompt_overrides={"cap": "plastic cap", "vial": "clear vial"},
+            )
+
+            detections = json.loads((run / "sam3_detections.json").read_text())
+            self.assertEqual(len(detections["objects"]), 2)
+            self.assertEqual(
+                {obj["class_name"] for obj in detections["objects"]},
+                {"cap", "vial"},
+            )
+            self.assertEqual(
+                {obj["category"] for obj in detections["objects"]},
+                {"cap", "vial"},
+            )
+            self.assertEqual(
+                {obj["label"] for obj in detections["objects"]},
+                {"cap", "vial"},
+            )
+
+            manifest = build_dataset(
+                [run],
+                root / "dataset",
+                val_fraction=0,
+                detections_name="sam3_detections.json",
+                class_names=("cap", "vial"),
+            )
+            self.assertEqual(
+                manifest["boxes_by_class"]["train"], {"cap": 1, "vial": 1}
             )
 
 
